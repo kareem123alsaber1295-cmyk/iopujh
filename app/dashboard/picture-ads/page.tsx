@@ -35,7 +35,7 @@ const ANGLE_DESCS = [
 
 interface ImageState {
   angle: string;
-  objectUrl: string | null;
+  b64: string | null;
   loading: boolean;
   error: string | null;
 }
@@ -50,36 +50,39 @@ export default function PictureAdsPage() {
   const [images, setImages] = useState<ImageState[]>([]);
 
   const hasStarted = images.length > 0;
-  const allDone = hasStarted && images.every((img) => !img.loading);
+  const doneCount = images.filter((img) => !img.loading).length;
+  const allDone = hasStarted && doneCount === images.length;
 
   async function fetchOne(angle: string, params: object): Promise<void> {
+    console.log(`[PictureAds] Starting fetch for: ${angle}`);
     try {
       const res = await fetch("/api/generate-product-photo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...params, angle }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Generation failed");
 
-      // Convert base64 to blob URL so browser renders it natively
-      const binary = atob(data.b64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      const blob = new Blob([bytes], { type: "image/png" });
-      const objectUrl = URL.createObjectURL(blob);
+      console.log(`[PictureAds] Response for ${angle}: status=${res.status}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        console.error(`[PictureAds] API error for ${angle}:`, data.error);
+        throw new Error(data.error || "Generation failed");
+      }
+
+      console.log(`[PictureAds] Got b64 for ${angle}, length=${data.b64?.length}`);
 
       setImages((prev) =>
         prev.map((img) =>
-          img.angle === angle ? { ...img, objectUrl, loading: false, error: null } : img
+          img.angle === angle ? { ...img, b64: data.b64, loading: false, error: null } : img
         )
       );
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed";
+      console.error(`[PictureAds] Error for ${angle}:`, msg);
       setImages((prev) =>
         prev.map((img) =>
-          img.angle === angle
-            ? { ...img, loading: false, error: err instanceof Error ? err.message : "Failed" }
-            : img
+          img.angle === angle ? { ...img, loading: false, error: msg } : img
         )
       );
     }
@@ -87,15 +90,12 @@ export default function PictureAdsPage() {
 
   async function handleGenerate() {
     if (!productName.trim()) return;
-    setGenerating(true);
+    console.log("[PictureAds] Generate clicked, product:", productName);
 
-    const initial: ImageState[] = ANGLES.map((angle) => ({
-      angle,
-      objectUrl: null,
-      loading: true,
-      error: null,
-    }));
-    setImages(initial);
+    setGenerating(true);
+    setImages(
+      ANGLES.map((angle) => ({ angle, b64: null, loading: true, error: null }))
+    );
 
     const params = {
       productName: productName.trim(),
@@ -107,11 +107,12 @@ export default function PictureAdsPage() {
 
     await Promise.all(ANGLES.map((angle) => fetchOne(angle, params)));
     setGenerating(false);
+    console.log("[PictureAds] All done");
   }
 
-  function downloadImage(objectUrl: string, angle: string) {
+  function downloadImage(b64: string, angle: string) {
     const link = document.createElement("a");
-    link.href = objectUrl;
+    link.href = `data:image/png;base64,${b64}`;
     link.download = `${productName.replace(/\s+/g, "-").toLowerCase()}-${angle.replace(/\s+/g, "-").toLowerCase()}.png`;
     document.body.appendChild(link);
     link.click();
@@ -177,9 +178,7 @@ export default function PictureAdsPage() {
               className="w-full h-10 px-3.5 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-all"
             >
               {BRAND_STYLES.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
+                <option key={s.value} value={s.value}>{s.label}</option>
               ))}
             </select>
           </div>
@@ -191,9 +190,7 @@ export default function PictureAdsPage() {
               className="w-full h-10 px-3.5 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-all"
             >
               {IMAGE_FORMATS.map((f) => (
-                <option key={f.value} value={f.value}>
-                  {f.label} — {f.desc}
-                </option>
+                <option key={f.value} value={f.value}>{f.label} — {f.desc}</option>
               ))}
             </select>
           </div>
@@ -207,7 +204,7 @@ export default function PictureAdsPage() {
           {generating ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              Generating — images appear as each one finishes…
+              Generating… {doneCount} of {ANGLES.length} ready — takes ~20 sec each
             </>
           ) : allDone ? (
             <>
@@ -238,28 +235,29 @@ export default function PictureAdsPage() {
                   <>
                     <div className="h-56 bg-secondary animate-pulse" />
                     <div className="p-4 flex items-center gap-2">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
                       <p className="text-sm text-muted-foreground">Generating {img.angle}…</p>
                     </div>
                   </>
                 ) : img.error ? (
                   <>
-                    <div className="h-56 bg-secondary flex items-center justify-center">
+                    <div className="h-56 bg-red-50 dark:bg-red-900/10 flex items-center justify-center">
                       <div className="text-center px-6">
                         <AlertCircle className="h-8 w-8 text-red-400 mx-auto mb-2" />
-                        <p className="text-xs text-red-400">{img.error}</p>
+                        <p className="text-xs text-red-500 font-medium">Generation failed</p>
+                        <p className="text-xs text-red-400 mt-1 break-all">{img.error}</p>
                       </div>
                     </div>
                     <div className="px-4 py-3">
                       <p className="text-sm font-semibold">{img.angle}</p>
                     </div>
                   </>
-                ) : img.objectUrl ? (
+                ) : img.b64 ? (
                   <>
                     <div className="relative">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={img.objectUrl}
+                        src={`data:image/png;base64,${img.b64}`}
                         alt={`${productName} – ${img.angle}`}
                         className="w-full object-cover"
                       />
@@ -271,9 +269,8 @@ export default function PictureAdsPage() {
                       </div>
                       <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
-                          onClick={() => downloadImage(img.objectUrl!, img.angle)}
+                          onClick={() => downloadImage(img.b64!, img.angle)}
                           className="p-2 rounded-lg bg-black/60 text-white backdrop-blur-sm hover:bg-black/80 transition-colors"
-                          title="Download"
                         >
                           <Download className="h-4 w-4" />
                         </button>
@@ -282,7 +279,7 @@ export default function PictureAdsPage() {
                     <div className="px-4 py-3 flex items-center justify-between">
                       <p className="text-sm font-semibold">{img.angle}</p>
                       <button
-                        onClick={() => downloadImage(img.objectUrl!, img.angle)}
+                        onClick={() => downloadImage(img.b64!, img.angle)}
                         className="flex items-center gap-1.5 text-xs text-primary font-medium hover:underline"
                       >
                         <Download className="h-3.5 w-3.5" />
@@ -326,7 +323,7 @@ export default function PictureAdsPage() {
         <div className="flex items-center gap-2 mt-4">
           <Sparkles className="h-4 w-4 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">
-            Fill in the form above and click Generate — 4 photos will appear one by one
+            Fill in your product name above and click Generate — images appear one by one (~20 sec each)
           </p>
         </div>
       )}
