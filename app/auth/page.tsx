@@ -70,7 +70,7 @@ export default function AuthPage() {
       </div>
 
       {/* Right panel */}
-      <div className="flex-1 flex items-center justify-center p-8 bg-background">
+      <div className="flex-1 flex items-center justify-center p-5 sm:p-8 bg-background">
         <motion.div
           className="w-full max-w-md"
           initial={{ opacity: 0, y: 20 }}

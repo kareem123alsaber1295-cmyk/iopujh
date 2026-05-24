@@ -64,7 +64,7 @@ export default function LandingPage() {
             Powered by GPT-4 Vision + Claude 3
           </motion.div>
 
-          <motion.h1 variants={fadeUp} className="text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight leading-[1.1] mb-6">
+          <motion.h1 variants={fadeUp} className="text-4xl sm:text-5xl lg:text-7xl font-bold tracking-tight leading-[1.1] mb-6">
             Turn Products Into{" "}
             <span className="gradient-text">Brands</span>{" "}
             With AI
@@ -275,7 +275,7 @@ export default function LandingPage() {
           viewport={{ once: true }}
           transition={{ duration: 0.5 }}
         >
-          <div className="relative rounded-3xl gradient-bg p-16 overflow-hidden">
+          <div className="relative rounded-3xl gradient-bg p-8 sm:p-16 overflow-hidden">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(255,255,255,0.1),transparent)]" />
             <h2 className="text-4xl font-bold text-white mb-4 relative z-10">
               Ready to launch your brand?
@@ -303,7 +303,7 @@ export default function LandingPage() {
             </div>
             <span className="font-bold text-sm">LaunchLabs</span>
           </div>
-          <div className="flex items-center gap-6 text-sm text-muted-foreground">
+          <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-6 text-sm text-muted-foreground">
             {["Privacy", "Terms", "Blog", "Careers", "Support"].map((l) => (
               <Link key={l} href="#" className="hover:text-foreground transition-colors">{l}</Link>
             ))}
@@ -317,8 +317,8 @@ export default function LandingPage() {
 
 function DashboardPreview() {
   return (
-    <div className="flex h-[420px] overflow-hidden">
-      <div className="w-48 bg-sidebar border-r border-sidebar-border p-3 flex flex-col gap-1 shrink-0">
+    <div className="flex h-[260px] sm:h-[420px] overflow-hidden">
+      <div className="hidden sm:flex w-48 bg-sidebar border-r border-sidebar-border p-3 flex-col gap-1 shrink-0">
         <div className="flex items-center gap-2 px-2 py-2 mb-2">
           <div className="w-5 h-5 rounded gradient-bg" />
           <span className="text-xs font-bold text-sidebar-foreground">LaunchLabs</span>

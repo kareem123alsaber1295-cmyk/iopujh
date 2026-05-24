@@ -64,7 +64,7 @@ export default function HooksScriptsPage() {
   const filtered = activeCategory === "All" ? hooks : hooks.filter(h => h.category === activeCategory);
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4 sm:p-6 max-w-5xl mx-auto">
       <div className="mb-8">
         <p className="text-muted-foreground text-sm mb-1">Creative Tools</p>
         <h1 className="text-2xl font-bold tracking-tight">Hooks & Scripts</h1>

@@ -4,7 +4,7 @@ import { User, CreditCard, Bell, Shield, Key, Globe } from "lucide-react";
 
 export default function SettingsPage() {
   return (
-    <div className="p-6 max-w-3xl mx-auto">
+    <div className="p-4 sm:p-6 max-w-3xl mx-auto">
       <div className="mb-8">
         <p className="text-muted-foreground text-sm mb-1">Account</p>
         <h1 className="text-2xl font-bold tracking-tight">Settings</h1>

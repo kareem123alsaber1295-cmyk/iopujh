@@ -14,7 +14,7 @@ const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } };
 
 export default function DashboardPage() {
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 max-w-7xl mx-auto">
       {/* Header */}
       <motion.div variants={stagger} initial="hidden" animate="show" className="mb-8">
         <motion.div variants={fadeUp}>
@@ -25,7 +25,7 @@ export default function DashboardPage() {
 
       {/* Stats */}
       <motion.div
-        className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8"
+        className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8"
         variants={stagger}
         initial="hidden"
         animate="show"
@@ -34,7 +34,7 @@ export default function DashboardPage() {
           <motion.div
             key={s.label}
             variants={fadeUp}
-            className="bg-card border border-border rounded-2xl p-5 hover:shadow-md transition-shadow"
+            className="bg-card border border-border rounded-2xl p-4 sm:p-5 hover:shadow-md transition-shadow"
           >
             <div className="flex items-center justify-between mb-3">
               <div className={`w-9 h-9 rounded-xl ${s.color} flex items-center justify-center`}>

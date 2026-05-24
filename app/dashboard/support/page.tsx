@@ -475,7 +475,7 @@ export default function SupportPage() {
   const [activeTab, setActiveTab] = useState("chat");
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4 sm:p-6 max-w-5xl mx-auto">
       <div className="mb-6">
         <div className="flex flex-wrap items-center gap-2 mb-1">
           <p className="text-muted-foreground text-sm">Help & Support</p>

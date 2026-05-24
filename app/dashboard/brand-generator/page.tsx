@@ -129,7 +129,7 @@ export default function BrandGeneratorPage() {
   const allSelected = selectedOutputs.size === outputOptions.length;
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="p-4 sm:p-6 max-w-4xl mx-auto">
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
         <div className="mb-8">
           <p className="text-muted-foreground text-sm mb-1">AI Brand Builder</p>
