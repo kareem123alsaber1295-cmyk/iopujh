@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Sparkles, Copy, Check, RefreshCw, Save, Download, Upload, X,
   Search, Lightbulb, Layers, PenTool, Film, ClipboardList,
-  AlertCircle, Megaphone, Target, Wand2, ImageIcon, Play,
+  AlertCircle, Megaphone, Target, Wand2, ImageIcon, Play, Video,
 } from "lucide-react";
 import {
   generateAds,
@@ -17,12 +17,40 @@ import {
   type ScriptStyle,
   type HookType,
 } from "@/lib/generateAds";
+import {
+  runVideoPipeline,
+  PIPELINE_STAGES,
+  VIDEO_MODES,
+  CHARACTER_STYLES,
+  SETTINGS,
+  VOICE_STYLES,
+  CAPTION_STYLES,
+  type VideoGeneration,
+  type VideoGenerationInput,
+  type VideoMode,
+  type VideoPlatform,
+  type VideoDuration,
+} from "@/lib/videoPipeline";
+import GenerationProgress from "@/components/video-generator/GenerationProgress";
+import VideoGallery from "@/components/video-generator/VideoGallery";
 
 const PLATFORMS: Platform[] = ["Meta Feed", "TikTok", "Instagram Stories", "YouTube Shorts"];
 const GOALS: Goal[] = ["Conversions", "Leads", "Awareness", "Retargeting"];
 const AD_TYPES: AdType[] = ["UGC Video", "Image Ad", "Problem/Solution", "Testimonial", "Founder Ad", "Educational Ad"];
 const SCRIPT_STYLES: ScriptStyle[] = ["UGC", "Testimonial", "Product Demo", "Problem/Solution", "Educational", "Founder-Style"];
 const VIDEO_LENGTHS: VideoLength[] = ["8 sec", "15 sec", "30 sec"];
+
+const VIDEO_STORAGE_KEY = "launchlabs_video_generations_v1";
+
+// Map the ad-generator's multi-select Platform[] into the single VideoPlatform
+// the video pipeline expects. Picks the first selected platform that maps cleanly.
+function mapPlatformForVideo(platforms: Platform[]): VideoPlatform {
+  if (platforms.includes("TikTok")) return "TikTok";
+  if (platforms.includes("Meta Feed")) return "Meta";
+  if (platforms.includes("Instagram Stories")) return "Instagram Reels";
+  if (platforms.includes("YouTube Shorts")) return "YouTube Shorts";
+  return "TikTok";
+}
 
 const LOADING_STAGES = [
   { label: "Scanning product", icon: Search },
@@ -33,7 +61,7 @@ const LOADING_STAGES = [
   { label: "Preparing testing plan", icon: ClipboardList },
 ];
 
-type TabKey = "overview" | "hooks" | "meta" | "tiktok" | "ugc" | "seedance" | "static" | "testing";
+type TabKey = "overview" | "hooks" | "meta" | "tiktok" | "ugc" | "seedance" | "static" | "testing" | "videos";
 
 const TABS: { key: TabKey; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: "overview", label: "Overview", icon: Layers },
@@ -44,6 +72,7 @@ const TABS: { key: TabKey; label: string; icon: React.ComponentType<{ className?
   { key: "seedance", label: "Seedance Prompts", icon: Film },
   { key: "static", label: "Static Ads", icon: ImageIcon },
   { key: "testing", label: "Testing Plan", icon: ClipboardList },
+  { key: "videos", label: "Videos", icon: Video },
 ];
 
 const HOOK_BADGE_COLOR: Record<HookType, string> = {
@@ -82,9 +111,51 @@ export default function AdGeneratorPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const stageIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Video-generator-specific fields. Kept separate from `form` (typed as
+  // AdGeneratorInput) so the ad copy generation API stays clean.
+  const [videoSettings, setVideoSettings] = useState({
+    videoMode: "Hybrid UGC" as VideoMode,
+    characterStyle: CHARACTER_STYLES[0],
+    setting: SETTINGS[0],
+    voiceStyle: VOICE_STYLES[0],
+    captionStyle: CAPTION_STYLES[0],
+  });
+  const [videos, setVideos] = useState<VideoGeneration[]>([]);
+  const [videoStage, setVideoStage] = useState<number | null>(null);
+  const videoHydratedRef = useRef(false);
+
   useEffect(() => () => {
     if (stageIntervalRef.current) clearInterval(stageIntervalRef.current);
   }, []);
+
+  // Hydrate saved videos from localStorage. Future: replace with a Supabase
+  // SELECT scoped to the authenticated user (auth.uid()).
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(VIDEO_STORAGE_KEY);
+      if (raw) setVideos(JSON.parse(raw));
+    } catch {
+      // Ignore corrupted storage
+    }
+    videoHydratedRef.current = true;
+  }, []);
+
+  // Persist videos to localStorage whenever they change (after initial hydration).
+  useEffect(() => {
+    if (!videoHydratedRef.current) return;
+    try {
+      localStorage.setItem(VIDEO_STORAGE_KEY, JSON.stringify(videos));
+    } catch {
+      // Quota errors are non-fatal for the mock flow.
+    }
+  }, [videos]);
+
+  function updateVideoSetting<K extends keyof typeof videoSettings>(
+    key: K,
+    value: (typeof videoSettings)[K],
+  ) {
+    setVideoSettings((v) => ({ ...v, [key]: value }));
+  }
 
   function update<K extends keyof AdGeneratorInput>(key: K, value: AdGeneratorInput[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -139,6 +210,62 @@ export default function AdGeneratorPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function validateVideo(): string[] {
+    const errs: string[] = [];
+    if (!form.productImage) errs.push("Product image is required for video generation");
+    if (!form.productName.trim()) errs.push("Product name is required");
+    if (!form.adScript.trim()) errs.push("Ad Script is required for video generation");
+    return errs;
+  }
+
+  async function handleGenerateVideo(overrides?: Partial<VideoGenerationInput>) {
+    const errs = validateVideo();
+    setErrors(errs);
+    if (errs.length > 0) return;
+
+    const videoInput: VideoGenerationInput = {
+      productImage: form.productImage ?? null,
+      productName: form.productName,
+      script: form.adScript,
+      mode: videoSettings.videoMode,
+      // VideoLength and VideoDuration are structurally identical string unions.
+      duration: form.videoLength as unknown as VideoDuration,
+      platform: mapPlatformForVideo(form.platforms),
+      characterStyle: videoSettings.characterStyle,
+      setting: videoSettings.setting,
+      voiceStyle: videoSettings.voiceStyle,
+      captionStyle: videoSettings.captionStyle,
+      ...overrides,
+    };
+
+    setVideoStage(0);
+    try {
+      const result = await runVideoPipeline(videoInput, (i) => setVideoStage(i));
+      setVideoStage(PIPELINE_STAGES.length - 1);
+      await new Promise((r) => setTimeout(r, 300));
+      setVideos((prev) => [result, ...prev]);
+      setActiveTab("videos");
+    } finally {
+      setVideoStage(null);
+    }
+  }
+
+  function handleRegenerateVideo(g: VideoGeneration) {
+    handleGenerateVideo({
+      productImage: g.product_image_url,
+      productName: g.product_name,
+      script: g.script,
+      mode: g.mode,
+      duration: g.duration,
+      platform: g.platform,
+      voiceStyle: g.voice_style || videoSettings.voiceStyle,
+    });
+  }
+
+  function handleDeleteVideo(id: string) {
+    setVideos((prev) => prev.filter((v) => v.id !== id));
   }
 
   function copy(text: string, key: string) {
@@ -338,6 +465,70 @@ export default function AdGeneratorPage() {
               </select>
             </Field>
 
+            {/* ── Video Settings ─────────────────────────────────── */}
+            <div className="pt-1">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="h-px flex-1 bg-border" />
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1.5">
+                  <Video className="h-3 w-3" />
+                  Video Settings
+                </span>
+                <div className="h-px flex-1 bg-border" />
+              </div>
+
+              <div className="space-y-5">
+                <Field label="Video mode">
+                  <select
+                    value={videoSettings.videoMode}
+                    onChange={(e) => updateVideoSetting("videoMode", e.target.value as VideoMode)}
+                    className="form-input"
+                  >
+                    {VIDEO_MODES.map((m) => <option key={m}>{m}</option>)}
+                  </select>
+                </Field>
+
+                <Field label="Character style">
+                  <select
+                    value={videoSettings.characterStyle}
+                    onChange={(e) => updateVideoSetting("characterStyle", e.target.value)}
+                    className="form-input"
+                  >
+                    {CHARACTER_STYLES.map((c) => <option key={c}>{c}</option>)}
+                  </select>
+                </Field>
+
+                <Field label="Setting">
+                  <select
+                    value={videoSettings.setting}
+                    onChange={(e) => updateVideoSetting("setting", e.target.value)}
+                    className="form-input"
+                  >
+                    {SETTINGS.map((s) => <option key={s}>{s}</option>)}
+                  </select>
+                </Field>
+
+                <Field label="Voice style">
+                  <select
+                    value={videoSettings.voiceStyle}
+                    onChange={(e) => updateVideoSetting("voiceStyle", e.target.value)}
+                    className="form-input"
+                  >
+                    {VOICE_STYLES.map((v) => <option key={v}>{v}</option>)}
+                  </select>
+                </Field>
+
+                <Field label="Caption style">
+                  <select
+                    value={videoSettings.captionStyle}
+                    onChange={(e) => updateVideoSetting("captionStyle", e.target.value)}
+                    className="form-input"
+                  >
+                    {CAPTION_STYLES.map((c) => <option key={c}>{c}</option>)}
+                  </select>
+                </Field>
+              </div>
+            </div>
+
             <Field label="Platforms" required>
               <div className="grid grid-cols-2 gap-2">
                 {PLATFORMS.map((p) => {
@@ -400,8 +591,8 @@ export default function AdGeneratorPage() {
 
             <button
               onClick={handleGenerate}
-              disabled={loading}
-              className="w-full gradient-bg text-white font-semibold py-3 rounded-xl hover:opacity-90 transition-all flex items-center justify-center gap-2 text-sm shadow-lg shadow-primary/20 disabled:opacity-60"
+              disabled={loading || videoStage !== null}
+              className="w-full gradient-bg text-white font-semibold py-3 rounded-xl hover:opacity-90 transition-all flex items-center justify-center gap-2 text-sm shadow-lg shadow-primary/20 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {loading ? (
                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -410,22 +601,40 @@ export default function AdGeneratorPage() {
               )}
               {loading ? "Generating Ad Kit..." : "Generate Ads"}
             </button>
+
+            <button
+              onClick={() => handleGenerateVideo()}
+              disabled={loading || videoStage !== null}
+              className="w-full bg-foreground text-background font-semibold py-3 rounded-xl hover:bg-foreground/90 transition-all flex items-center justify-center gap-2 text-sm shadow-md disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {videoStage !== null ? (
+                <div className="w-4 h-4 border-2 border-background/30 border-t-background rounded-full animate-spin" />
+              ) : (
+                <Video className="h-4 w-4" />
+              )}
+              {videoStage !== null ? "Generating Video..." : "Generate Video"}
+            </button>
           </div>
         </aside>
 
         {/* ── RIGHT: Results ─────────────────────────────────────── */}
         <section className="min-w-0">
-          {loading ? (
+          {videoStage !== null ? (
+            <GenerationProgress stage={videoStage} />
+          ) : loading ? (
             <LoadingPanel stage={loadingStage} />
-          ) : !kit ? (
+          ) : !kit && videos.length === 0 ? (
             <EmptyState />
           ) : (
             <ResultsPanel
               kit={kit}
+              videos={videos}
               activeTab={activeTab}
               setActiveTab={setActiveTab}
               copy={copy}
               copiedKey={copiedKey}
+              onRegenerateVideo={handleRegenerateVideo}
+              onDeleteVideo={handleDeleteVideo}
             />
           )}
         </section>
@@ -550,17 +759,26 @@ function LoadingPanel({ stage }: { stage: number }) {
 // ─────────────────────────────────────────────────────────────────
 function ResultsPanel({
   kit,
+  videos,
   activeTab,
   setActiveTab,
   copy,
   copiedKey,
+  onRegenerateVideo,
+  onDeleteVideo,
 }: {
-  kit: AdKit;
+  kit: AdKit | null;
+  videos: VideoGeneration[];
   activeTab: TabKey;
   setActiveTab: (k: TabKey) => void;
   copy: (text: string, key: string) => void;
   copiedKey: string | null;
+  onRegenerateVideo: (g: VideoGeneration) => void;
+  onDeleteVideo: (id: string) => void;
 }) {
+  // If we landed on an ad-kit tab but the user only has videos, snap to videos.
+  const effectiveTab: TabKey = !kit && activeTab !== "videos" ? "videos" : activeTab;
+
   return (
     <div className="space-y-4">
       {/* Tabs */}
@@ -568,19 +786,29 @@ function ResultsPanel({
         <div className="flex gap-1 min-w-max">
           {TABS.map((t) => {
             const Icon = t.icon;
-            const active = activeTab === t.key;
+            const active = effectiveTab === t.key;
+            const isVideoTab = t.key === "videos";
+            const disabled = !isVideoTab && !kit;
             return (
               <button
                 key={t.key}
-                onClick={() => setActiveTab(t.key)}
+                onClick={() => !disabled && setActiveTab(t.key)}
+                disabled={disabled}
                 className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap ${
                   active
                     ? "gradient-bg text-white shadow-md shadow-primary/20"
+                    : disabled
+                    ? "text-muted-foreground/40 cursor-not-allowed"
                     : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
                 }`}
               >
                 <Icon className="h-3.5 w-3.5" />
                 {t.label}
+                {isVideoTab && videos.length > 0 && (
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${active ? "bg-white/20" : "bg-secondary text-foreground"}`}>
+                    {videos.length}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -590,20 +818,27 @@ function ResultsPanel({
       {/* Tab content */}
       <AnimatePresence mode="wait">
         <motion.div
-          key={activeTab}
+          key={effectiveTab}
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -4 }}
           transition={{ duration: 0.2 }}
         >
-          {activeTab === "overview" && <OverviewTab overview={kit.overview} copy={copy} copiedKey={copiedKey} />}
-          {activeTab === "hooks" && <HooksTab hooks={kit.hooks} copy={copy} copiedKey={copiedKey} />}
-          {activeTab === "meta" && <MetaTab ads={kit.metaAds} copy={copy} copiedKey={copiedKey} />}
-          {activeTab === "tiktok" && <TikTokTab ads={kit.tiktokAds} copy={copy} copiedKey={copiedKey} />}
-          {activeTab === "ugc" && <UGCTab scripts={kit.ugcScripts} copy={copy} copiedKey={copiedKey} />}
-          {activeTab === "seedance" && <SeedanceTab prompts={kit.seedancePrompts} copy={copy} copiedKey={copiedKey} />}
-          {activeTab === "static" && <StaticTab ads={kit.staticAds} copy={copy} copiedKey={copiedKey} />}
-          {activeTab === "testing" && <TestingTab plan={kit.testingPlan} copy={copy} copiedKey={copiedKey} />}
+          {effectiveTab === "videos" && (
+            <VideoGallery
+              generations={videos}
+              onRegenerate={onRegenerateVideo}
+              onDelete={onDeleteVideo}
+            />
+          )}
+          {kit && effectiveTab === "overview" && <OverviewTab overview={kit.overview} copy={copy} copiedKey={copiedKey} />}
+          {kit && effectiveTab === "hooks" && <HooksTab hooks={kit.hooks} copy={copy} copiedKey={copiedKey} />}
+          {kit && effectiveTab === "meta" && <MetaTab ads={kit.metaAds} copy={copy} copiedKey={copiedKey} />}
+          {kit && effectiveTab === "tiktok" && <TikTokTab ads={kit.tiktokAds} copy={copy} copiedKey={copiedKey} />}
+          {kit && effectiveTab === "ugc" && <UGCTab scripts={kit.ugcScripts} copy={copy} copiedKey={copiedKey} />}
+          {kit && effectiveTab === "seedance" && <SeedanceTab prompts={kit.seedancePrompts} copy={copy} copiedKey={copiedKey} />}
+          {kit && effectiveTab === "static" && <StaticTab ads={kit.staticAds} copy={copy} copiedKey={copiedKey} />}
+          {kit && effectiveTab === "testing" && <TestingTab plan={kit.testingPlan} copy={copy} copiedKey={copiedKey} />}
         </motion.div>
       </AnimatePresence>
     </div>
