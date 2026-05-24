@@ -5,10 +5,11 @@ import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Sparkles, LayoutDashboard, Palette, Megaphone, FileText,
-  Video, Image, Package, Settings, Menu, X, Bell, Search,
+  Video, Image, Package, Settings, Menu, X, Bell,
   ChevronRight, LogOut, User, Zap, LifeBuoy
 } from "lucide-react";
 import SupportBubble from "@/components/support-bubble";
+import GlobalSearch from "@/components/global-search";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -143,13 +144,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </button>
 
           <div className="flex-1 flex items-center gap-3">
-            <div className="relative hidden sm:flex items-center max-w-xs w-full">
-              <Search className="absolute left-3 h-3.5 w-3.5 text-muted-foreground" />
-              <input
-                placeholder="Search..."
-                className="w-full h-8 pl-9 pr-3 rounded-lg bg-secondary/60 text-sm focus:outline-none focus:ring-2 focus:ring-ring border border-transparent focus:border-border transition-all"
-              />
-            </div>
+            <GlobalSearch />
           </div>
 
           <div className="flex items-center gap-2">
