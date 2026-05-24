@@ -77,7 +77,6 @@ export async function POST(req: NextRequest) {
         n: 1,
         size,
         quality: "hd",
-        response_format: "url",
       })
     );
 
