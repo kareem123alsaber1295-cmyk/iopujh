@@ -46,7 +46,7 @@ const CONCEPT_PLACEHOLDERS = [
 
 interface GeneratedImage {
   angle: string;
-  b64: string | null;
+  url: string | null;
 }
 
 export default function PictureAdsPage() {
@@ -80,7 +80,7 @@ export default function PictureAdsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Generation failed");
 
-      setImages(data.images as GeneratedImage[]);
+      setImages((data.images as GeneratedImage[]));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Generation failed");
     } finally {
@@ -88,13 +88,21 @@ export default function PictureAdsPage() {
     }
   }
 
-  function downloadImage(b64: string, angle: string) {
-    const link = document.createElement("a");
-    link.href = `data:image/png;base64,${b64}`;
-    link.download = `${productName.replace(/\s+/g, "-").toLowerCase()}-${angle.replace(/\s+/g, "-").toLowerCase()}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  async function downloadImage(url: string, angle: string) {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = `${productName.replace(/\s+/g, "-").toLowerCase()}-${angle.replace(/\s+/g, "-").toLowerCase()}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(url, "_blank");
+    }
   }
 
   const hasImages = images.length > 0;
@@ -250,11 +258,11 @@ export default function PictureAdsPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.08, duration: 0.4 }}
               >
-                {img.b64 ? (
+                {img.url ? (
                   <div className="relative">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={`data:image/png;base64,${img.b64}`}
+                      src={img.url}
                       alt={`${productName} – ${img.angle}`}
                       className="w-full object-cover"
                     />
@@ -266,7 +274,7 @@ export default function PictureAdsPage() {
                     </div>
                     <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button
-                        onClick={() => downloadImage(img.b64!, img.angle)}
+                        onClick={() => downloadImage(img.url!, img.angle)}
                         className="p-2 rounded-lg bg-black/60 text-white backdrop-blur-sm hover:bg-black/80 transition-colors"
                         title="Download"
                       >
@@ -282,9 +290,9 @@ export default function PictureAdsPage() {
 
                 <div className="px-4 py-3 flex items-center justify-between">
                   <p className="text-sm font-semibold">{img.angle}</p>
-                  {img.b64 && (
+                  {img.url && (
                     <button
-                      onClick={() => downloadImage(img.b64!, img.angle)}
+                      onClick={() => downloadImage(img.url!, img.angle)}
                       className="flex items-center gap-1.5 text-xs text-primary font-medium hover:underline"
                     >
                       <Download className="h-3.5 w-3.5" />

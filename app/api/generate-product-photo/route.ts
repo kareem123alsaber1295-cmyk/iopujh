@@ -14,11 +14,12 @@ const STYLE_GUIDES: Record<string, string> = {
   natural: "natural organic setting with plants or wood surfaces, soft diffused daylight, earthy warm tones",
 };
 
-const SIZE_MAP: Record<string, "1024x1024" | "1536x1024" | "1024x1536"> = {
+// dall-e-3 supported sizes only
+const SIZE_MAP: Record<string, "1024x1024" | "1792x1024" | "1024x1792"> = {
   square: "1024x1024",
-  landscape: "1536x1024",
-  portrait: "1024x1536",
-  story: "1024x1536",
+  landscape: "1792x1024",
+  portrait: "1024x1792",
+  story: "1024x1792",
 };
 
 const ANGLES = [
@@ -71,11 +72,12 @@ export async function POST(req: NextRequest) {
 
     const requests = ANGLES.map((angle) =>
       client.images.generate({
-        model: "gpt-image-1",
+        model: "dall-e-3",
         prompt: `${basePrompt} ${angle.suffix}`,
         n: 1,
         size,
-        quality: "high",
+        quality: "hd",
+        response_format: "url",
       })
     );
 
@@ -83,7 +85,7 @@ export async function POST(req: NextRequest) {
 
     const images = responses.map((res, i) => ({
       angle: ANGLES[i].name,
-      b64: res.data?.[0]?.b64_json ?? null,
+      url: res.data?.[0]?.url ?? null,
     }));
 
     return NextResponse.json({ images });
