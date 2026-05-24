@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 
-const client = new OpenAI();
+export const dynamic = "force-dynamic";
+
+function getClient() {
+  return new OpenAI();
+}
 
 const STYLE_GUIDES: Record<string, string> = {
   clean: "clean minimal white or light grey background, bright even studio lighting, crisp professional shadows",
@@ -49,6 +53,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "productName is required" }, { status: 400 });
     }
 
+    const client = getClient();
     const size = SIZE_MAP[imageType as string] ?? "1024x1024";
     const styleDesc = STYLE_GUIDES[brandStyle as string] ?? STYLE_GUIDES.clean;
 
