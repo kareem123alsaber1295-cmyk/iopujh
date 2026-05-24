@@ -20,6 +20,7 @@ import { generateVideo } from "@/lib/generateVideo";
 import { lipSync } from "@/lib/lipSync";
 import { renderFinal } from "@/lib/renderFinal";
 import { uploadVideo } from "@/lib/storage";
+import { insertVideoGeneration } from "@/lib/database";
 import type { VideoGeneration, VideoGenerationInput } from "@/lib/videoPipeline";
 
 // Run the pipeline as a Node.js (not Edge) function so we can hold the audio
@@ -85,10 +86,7 @@ export async function POST(req: NextRequest) {
     const stored = await uploadVideo(rendered.finalVideoUrl, filename);
     console.log(`[pipeline] storage: provider=${stored.provider}`);
 
-    const totalMs = Date.now() - startedAt;
-    console.log(`[pipeline] done in ${totalMs}ms`);
-
-    // Compose the database-ready record. Fields match the planned Supabase
+    // Compose the database-ready record. Fields match the Supabase
     // video_generations table 1:1.
     const record: VideoGeneration = {
       id,
@@ -108,6 +106,14 @@ export async function POST(req: NextRequest) {
       status: "completed",
       created_at: new Date().toISOString(),
     };
+
+    // Persist to the shared workspace so both partners see this video in
+    // their gallery. Failure is non-fatal — the client still gets its
+    // record back and the file still exists in storage.
+    await insertVideoGeneration(record);
+
+    const totalMs = Date.now() - startedAt;
+    console.log(`[pipeline] done in ${totalMs}ms`);
 
     return NextResponse.json(record);
   } catch (err) {

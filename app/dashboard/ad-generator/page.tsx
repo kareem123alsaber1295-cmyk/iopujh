@@ -128,25 +128,45 @@ export default function AdGeneratorPage() {
     if (stageIntervalRef.current) clearInterval(stageIntervalRef.current);
   }, []);
 
-  // Hydrate saved videos from localStorage. Future: replace with a Supabase
-  // SELECT scoped to the authenticated user (auth.uid()).
+  // Hydrate saved videos. Source of truth is the shared Supabase table
+  // via /api/list-videos so both partners see the same gallery. If the
+  // database is unreachable (or Supabase env vars aren't set), we fall
+  // back to localStorage so the dashboard still works in pure-mock mode.
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(VIDEO_STORAGE_KEY);
-      if (raw) setVideos(JSON.parse(raw));
-    } catch {
-      // Ignore corrupted storage
-    }
-    videoHydratedRef.current = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/list-videos");
+        if (res.ok) {
+          const data = (await res.json()) as VideoGeneration[];
+          if (!cancelled && Array.isArray(data) && data.length > 0) {
+            setVideos(data);
+            videoHydratedRef.current = true;
+            return;
+          }
+        }
+      } catch {
+        // Fall through to localStorage
+      }
+      if (cancelled) return;
+      try {
+        const raw = localStorage.getItem(VIDEO_STORAGE_KEY);
+        if (raw) setVideos(JSON.parse(raw));
+      } catch {
+        // Ignore corrupted storage
+      }
+      videoHydratedRef.current = true;
+    })();
+    return () => { cancelled = true; };
   }, []);
 
-  // Persist videos to localStorage whenever they change (after initial hydration).
+  // Mirror the gallery into localStorage as an offline-safe cache.
   useEffect(() => {
     if (!videoHydratedRef.current) return;
     try {
       localStorage.setItem(VIDEO_STORAGE_KEY, JSON.stringify(videos));
     } catch {
-      // Quota errors are non-fatal for the mock flow.
+      // Quota errors are non-fatal.
     }
   }, [videos]);
 
@@ -265,7 +285,18 @@ export default function AdGeneratorPage() {
   }
 
   function handleDeleteVideo(id: string) {
+    // Optimistically remove from the UI immediately, then delete from the
+    // shared database. If the DB delete fails, the row will reappear on the
+    // next page load — that's intentional so accidental local deletes
+    // (e.g. across two tabs) don't silently lose partner data.
     setVideos((prev) => prev.filter((v) => v.id !== id));
+    fetch("/api/delete-video", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    }).catch(() => {
+      // Best-effort delete; failure surfaces on next reload
+    });
   }
 
   function copy(text: string, key: string) {
