@@ -1145,9 +1145,6 @@ export const PRODUCTS: Product[] = [
     monthlySearchVolume: "250K",
     platforms: ["Meta", "Instagram", "DTC"],
   },
-];
-
-// ── SEARCH ───────────────────────────────────────────────────────────────
 
   // ── HAIR ────────────────────────────────────────────────────────────
   {
