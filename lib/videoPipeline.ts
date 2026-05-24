@@ -109,21 +109,52 @@ export const CAPTION_STYLES = [
   "None",
 ];
 
-// Run the mocked pipeline. `onStage` is invoked when each stage begins.
-// Returns the final VideoGeneration record once all stages complete.
+// Drive the real server-side pipeline (/api/generate-video) while ticking
+// the UI stages on a timer so the progress UI still feels alive.
+//
+// Stage timing here is approximate — actual server-side stage durations vary
+// wildly depending on which providers are mocked vs live. When the API
+// returns, we snap the UI to the final stage. V2 plan: replace timer-based
+// ticking with SSE / polling so stages reflect real server progress.
 export async function runVideoPipeline(
   input: VideoGenerationInput,
   onStage: (stageIndex: number) => void,
 ): Promise<VideoGeneration> {
-  // TODO: real implementation will fire off jobs to fal.ai / ElevenLabs / Sync Labs
-  // in parallel where possible, and poll their status endpoints between stages.
-  for (let i = 0; i < PIPELINE_STAGES.length; i++) {
-    onStage(i);
-    // Slightly randomised stage delay so it feels less mechanical
-    const base = 600;
-    const jitter = Math.floor(Math.random() * 300);
-    await new Promise((r) => setTimeout(r, base + jitter));
-  }
+  let cancelled = false;
 
-  return mockGenerateVideo(input);
+  // Estimated ms per stage when running in pure-mock mode. Live providers
+  // (ElevenLabs / fal.ai / Sync Labs) extend total time well past these.
+  const STAGE_MS = [400, 600, 1200, 1600, 1200, 600, 400, 400];
+
+  const tick = (async () => {
+    for (let i = 0; i < PIPELINE_STAGES.length; i++) {
+      if (cancelled) return;
+      onStage(i);
+      await new Promise((r) => setTimeout(r, STAGE_MS[i] ?? 500));
+    }
+  })();
+
+  try {
+    const res = await fetch("/api/generate-video", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+
+    cancelled = true;
+    await tick; // let any in-flight stage finish so the UI doesn't snap weirdly
+
+    if (!res.ok) {
+      console.warn(`[pipeline] /api/generate-video returned ${res.status}, using mock`);
+      return mockGenerateVideo(input);
+    }
+
+    const record = (await res.json()) as VideoGeneration;
+    onStage(PIPELINE_STAGES.length - 1);
+    return record;
+  } catch (err) {
+    cancelled = true;
+    console.warn("[pipeline] /api/generate-video threw, using mock:", err);
+    return mockGenerateVideo(input);
+  }
 }
