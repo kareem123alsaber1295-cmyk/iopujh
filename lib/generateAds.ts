@@ -119,37 +119,19 @@ export interface AdKit {
 }
 
 export async function generateAds(input: AdGeneratorInput): Promise<AdKit> {
-  // ─────────────────────────────────────────────────────────────────────
-  // TODO: Connect a real AI provider. The UI is already wired to render
-  // whatever shape this function returns, so as long as the returned object
-  // matches AdKit you don't need to touch the page.
-  //
-  // OpenAI example (server-side, in app/api/generate-ads/route.ts):
-  //   const res = await openai.chat.completions.create({
-  //     model: "gpt-4o",
-  //     response_format: { type: "json_object" },
-  //     messages: [
-  //       { role: "system", content: SYSTEM_PROMPT },
-  //       { role: "user", content: JSON.stringify(input) },
-  //     ],
-  //   });
-  //   return JSON.parse(res.choices[0].message.content) as AdKit;
-  //
-  // Anthropic example:
-  //   const res = await anthropic.messages.create({
-  //     model: "claude-opus-4-7",
-  //     max_tokens: 8000,
-  //     system: SYSTEM_PROMPT,
-  //     messages: [{ role: "user", content: JSON.stringify(input) }],
-  //   });
-  //   return JSON.parse(res.content[0].text) as AdKit;
-  //
-  // The SYSTEM_PROMPT should describe the AdKit shape and ask the model
-  // to return strict JSON matching it.
-  // ─────────────────────────────────────────────────────────────────────
-
-  await new Promise((r) => setTimeout(r, 600));
-  return mockGenerate(input);
+  try {
+    const res = await fetch("/api/generate-ads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) throw new Error(`API error ${res.status}`);
+    return (await res.json()) as AdKit;
+  } catch (err) {
+    console.warn("AI generation failed, using mock:", err);
+    await new Promise((r) => setTimeout(r, 600));
+    return mockGenerate(input);
+  }
 }
 
 function mockGenerate(input: AdGeneratorInput): AdKit {

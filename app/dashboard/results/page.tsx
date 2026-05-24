@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import {
@@ -19,7 +19,48 @@ const tabs = [
   { id: "audience", label: "Audience Ideas", icon: Users },
 ];
 
+interface ProductData {
+  name: string;
+  desc: string;
+  audience: string;
+  style: string;
+  outputs: string[];
+}
+
+function useProductData(): ProductData {
+  const [data, setData] = useState<ProductData>({
+    name: "Your Product",
+    desc: "",
+    audience: "",
+    style: "viral-tiktok",
+    outputs: [],
+  });
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("ll_product");
+      if (raw) setData(JSON.parse(raw));
+    } catch {}
+  }, []);
+  return data;
+}
+
+// Derives brand names from the product name
+function deriveBrandNames(productName: string): { name: string; tagline: string; score: number; rationale: string }[] {
+  const words = productName.trim().split(/\s+/);
+  const first = words[0] || "Brand";
+  const last = words[words.length - 1] || first;
+  const initial = first[0]?.toUpperCase() || "X";
+  return [
+    { name: `${first}Lab`, tagline: "Science meets style", score: 96, rationale: `Blends your product name with 'Lab' — signals efficacy and credibility` },
+    { name: `${initial}ura`, tagline: "Feel the difference", score: 93, rationale: `Short, memorable, and easy to trademark across all categories` },
+    { name: `Pure${last}`, tagline: "Nothing but results", score: 90, rationale: `'Pure' prefix elevates perceived quality and appeals to wellness buyers` },
+    { name: `${first}Co.`, tagline: "Built for results", score: 87, rationale: `Simple and scalable — works across product lines and brand extensions` },
+    { name: `The${first}Brand`, tagline: "Your new obsession", score: 84, rationale: `Definite article creates authority; works especially well on TikTok` },
+  ];
+}
+
 export default function ResultsPage() {
+  const product = useProductData();
   const [activeTab, setActiveTab] = useState("brand");
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -45,7 +86,7 @@ export default function ResultsPage() {
             </div>
             <div>
               <p className="text-xs text-muted-foreground leading-none">Generated Brand Kit</p>
-              <p className="text-sm font-semibold leading-none mt-0.5">GlowSkin Vitamin C Serum</p>
+              <p className="text-sm font-semibold leading-none mt-0.5">{product.name}</p>
             </div>
           </div>
           <div className="ml-auto flex items-center gap-2">
@@ -91,13 +132,13 @@ export default function ResultsPage() {
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.25 }}
           >
-            {activeTab === "brand" && <BrandTab copy={copy} copied={copied} />}
-            {activeTab === "photos" && <ProductPhotosTab />}
-            {activeTab === "hooks" && <HooksTab copy={copy} copied={copied} />}
-            {activeTab === "scripts" && <ScriptsTab copy={copy} copied={copied} />}
+            {activeTab === "brand" && <BrandTab copy={copy} copied={copied} product={product} />}
+            {activeTab === "photos" && <ProductPhotosTab product={product} />}
+            {activeTab === "hooks" && <HooksTab copy={copy} copied={copied} product={product} />}
+            {activeTab === "scripts" && <ScriptsTab copy={copy} copied={copied} product={product} />}
             {activeTab === "picture-ads" && <PictureAdsTab />}
             {activeTab === "video-ads" && <VideoAdsTab />}
-            {activeTab === "audience" && <AudienceTab />}
+            {activeTab === "audience" && <AudienceTab product={product} />}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -117,29 +158,129 @@ function CopyButton({ text, id, copy, copied }: { text: string; id: string; copy
   );
 }
 
-function BrandTab({ copy, copied }: { copy: (t: string, i: string) => void; copied: string | null }) {
-  const names = [
-    { name: "LumiGlow", tagline: "Skin that speaks", score: 96, rationale: "Combines luminosity + glow — aspirational, feminine, easy to trademark" },
-    { name: "AuraLab", tagline: "Science meets radiance", score: 93, rationale: "Scientific credibility + beauty aura. Lab signals efficacy to educated buyers" },
-    { name: "SkinForge", tagline: "Built for results", score: 89, rationale: "Bold, strong positioning — appeals to results-driven buyers sick of fluffy claims" },
-    { name: "GlowCo.", tagline: "Your skin, elevated", score: 87, rationale: "Simple, memorable, scalable brand name that works across SKUs" },
-    { name: "ClearLux", tagline: "Luxury, clarified", score: 84, rationale: "Positions at premium tier. Clear skin + luxury fused in two syllables" },
-  ];
-
-  const palettes = [
-    { name: "Rose Gold Minimal", colors: ["#1A0A0E", "#C97B84", "#F5E6E8", "#FFFFFF"], vibe: "Luxury · Feminine" },
+const styleпалетtes: Record<string, { name: string; colors: string[]; vibe: string }[]> = {
+  luxury: [
+    { name: "Noir & Gold", colors: ["#0D0D0D", "#C9A84C", "#F5F0E8", "#FFFFFF"], vibe: "Luxury · Exclusive" },
+    { name: "Champagne", colors: ["#1A1208", "#D4AF70", "#FDF6E3", "#FFFFFF"], vibe: "Premium · Elegant" },
+    { name: "Midnight Rose", colors: ["#1A0A0E", "#C97B84", "#F5E6E8", "#FFFFFF"], vibe: "Luxury · Feminine" },
+  ],
+  "viral-tiktok": [
+    { name: "Electric Pop", colors: ["#0D0D0D", "#FF3CAC", "#784BA0", "#FFFFFF"], vibe: "Bold · Viral" },
+    { name: "Neon Glow", colors: ["#0A0A0A", "#00F5A0", "#00D9F5", "#FFFFFF"], vibe: "Energetic · Gen-Z" },
+    { name: "Hot Pink Energy", colors: ["#1A0010", "#FF0080", "#FFD6EC", "#FFFFFF"], vibe: "Trendy · Loud" },
+  ],
+  minimal: [
+    { name: "Clean Slate", colors: ["#111111", "#555555", "#F2F2F2", "#FFFFFF"], vibe: "Minimal · Timeless" },
+    { name: "Soft Mono", colors: ["#1A1A1A", "#888888", "#EFEFEF", "#FFFFFF"], vibe: "Clean · Refined" },
+    { name: "Ink & Air", colors: ["#0A0A0A", "#2D2D2D", "#F8F8F8", "#FFFFFF"], vibe: "Simple · Bold" },
+  ],
+  feminine: [
+    { name: "Blush & Cream", colors: ["#2D1020", "#E8A0BF", "#FDE8F0", "#FFFFFF"], vibe: "Soft · Feminine" },
+    { name: "Lilac Dream", colors: ["#1A0A2E", "#C3A6E8", "#F3ECFB", "#FFFFFF"], vibe: "Dreamy · Elegant" },
+    { name: "Rose Dust", colors: ["#2D1A1A", "#D4847A", "#FAE8E6", "#FFFFFF"], vibe: "Warm · Empowering" },
+  ],
+  bold: [
+    { name: "Power Red", colors: ["#0D0D0D", "#E03030", "#FFF0F0", "#FFFFFF"], vibe: "Strong · Disruptive" },
+    { name: "Electric Blue", colors: ["#050A1A", "#1E40AF", "#EFF6FF", "#FFFFFF"], vibe: "Confident · Bold" },
+    { name: "Orange Strike", colors: ["#0D0800", "#EA580C", "#FFF7ED", "#FFFFFF"], vibe: "Energy · Impact" },
+  ],
+  wellness: [
+    { name: "Earth & Sage", colors: ["#1A1A0A", "#6B7C4E", "#F2F5EC", "#FFFFFF"], vibe: "Natural · Holistic" },
+    { name: "Ocean Calm", colors: ["#0A1A1A", "#4E9E9E", "#EAF6F6", "#FFFFFF"], vibe: "Serene · Pure" },
+    { name: "Terracotta Glow", colors: ["#2D1A00", "#D97706", "#FEF3C7", "#FFFBF0"], vibe: "Warm · Organic" },
+  ],
+  premium: [
     { name: "Clinical White", colors: ["#0A0F1A", "#3B82F6", "#EFF6FF", "#FFFFFF"], vibe: "Trust · Efficacy" },
-    { name: "Earth & Glow", colors: ["#2D1A00", "#D97706", "#FEF3C7", "#FFFBF0"], vibe: "Wellness · Natural" },
-  ];
+    { name: "Deep Navy", colors: ["#050A1A", "#1E3A8A", "#E8F0FE", "#FFFFFF"], vibe: "Premium · Reliable" },
+    { name: "Forest Elite", colors: ["#0A1A0A", "#166534", "#DCFCE7", "#FFFFFF"], vibe: "Premium · Natural" },
+  ],
+};
+
+function LogoMockup({ name, style }: { name: string; style: string }) {
+  const initial = (name[0] || "B").toUpperCase();
+  const shortName = name.split(" ").slice(0, 2).join("").toUpperCase().slice(0, 8);
+  const word1 = name.split(" ")[0] || name;
+  const word2 = name.split(" ").slice(1).join(" ");
+
+  const configs: Record<string, { bg: string; text: string; accent: string; sub: string }> = {
+    luxury:      { bg: "#0D0D0D", text: "#C9A84C", accent: "#C9A84C", sub: "#888" },
+    "viral-tiktok": { bg: "#0D0D0D", text: "#FF3CAC", accent: "#784BA0", sub: "#aaa" },
+    minimal:     { bg: "#FFFFFF", text: "#111111", accent: "#555", sub: "#999" },
+    feminine:    { bg: "#FDE8F0", text: "#2D1020", accent: "#E8A0BF", sub: "#999" },
+    bold:        { bg: "#0D0D0D", text: "#FFFFFF", accent: "#E03030", sub: "#aaa" },
+    wellness:    { bg: "#F2F5EC", text: "#1A1A0A", accent: "#6B7C4E", sub: "#888" },
+    premium:     { bg: "#0A0F1A", text: "#FFFFFF", accent: "#3B82F6", sub: "#aaa" },
+  };
+  const c = configs[style] || configs.minimal;
+
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      {/* Wordmark */}
+      <div className="flex flex-col items-center gap-2">
+        <div className="w-full h-20 rounded-xl flex items-center justify-center px-3 border border-border" style={{ background: c.bg }}>
+          <div className="text-center">
+            <div style={{ color: c.text, fontWeight: 800, fontSize: "clamp(10px,2.5vw,16px)", letterSpacing: "0.1em", lineHeight: 1 }}>{word1.toUpperCase()}</div>
+            {word2 && <div style={{ color: c.accent, fontWeight: 400, fontSize: "clamp(7px,1.5vw,11px)", letterSpacing: "0.25em", marginTop: 2 }}>{word2.toUpperCase()}</div>}
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground font-medium">Wordmark</p>
+      </div>
+
+      {/* Icon + Name */}
+      <div className="flex flex-col items-center gap-2">
+        <div className="w-full h-20 rounded-xl flex items-center justify-center gap-2 px-3 border border-border" style={{ background: c.bg }}>
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: c.accent }}>
+            <span style={{ color: "#fff", fontWeight: 900, fontSize: 13, lineHeight: 1 }}>{initial}</span>
+          </div>
+          <div style={{ color: c.text, fontWeight: 700, fontSize: "clamp(9px,2vw,13px)", letterSpacing: "0.05em", lineHeight: 1.2 }}>{word1}<br />{word2 && <span style={{ color: c.accent, fontWeight: 400, fontSize: "0.8em" }}>{word2}</span>}</div>
+        </div>
+        <p className="text-xs text-muted-foreground font-medium">Icon + Name</p>
+      </div>
+
+      {/* Monogram */}
+      <div className="flex flex-col items-center gap-2">
+        <div className="w-full h-20 rounded-xl flex items-center justify-center border border-border" style={{ background: c.bg }}>
+          <div className="w-12 h-12 rounded-full flex items-center justify-center border-2" style={{ borderColor: c.accent }}>
+            <span style={{ color: c.text, fontWeight: 900, fontSize: 20, lineHeight: 1 }}>{initial}</span>
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground font-medium">Monogram</p>
+      </div>
+    </div>
+  );
+}
+
+function BrandTab({ copy, copied, product }: { copy: (t: string, i: string) => void; copied: string | null; product: ProductData }) {
+  const names = deriveBrandNames(product.name);
+  const palettes = (styleпалетtes[product.style] || styleпалетtes.minimal);
+  const topName = names[0]?.name || product.name;
 
   return (
     <div className="grid lg:grid-cols-2 gap-6">
-      {/* Brand Names */}
+      {/* Left: Logo + Names */}
       <div className="space-y-5">
+        {/* Logo mockup */}
+        <div className="bg-card border border-border rounded-2xl overflow-hidden">
+          <div className="p-5 border-b border-border flex items-center justify-between">
+            <div>
+              <h2 className="font-bold">Generated Logo</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">3 concepts based on your brand style</p>
+            </div>
+            <span className="text-xs font-bold gradient-bg text-white px-2.5 py-1 rounded-full">{product.style}</span>
+          </div>
+          <div className="p-5">
+            <LogoMockup name={topName} style={product.style} />
+            <p className="text-xs text-muted-foreground mt-3 text-center leading-relaxed">
+              Click "Export PDF" to download all logo variants as SVG
+            </p>
+          </div>
+        </div>
+
+        {/* Brand Names */}
         <div className="bg-card border border-border rounded-2xl overflow-hidden">
           <div className="p-5 border-b border-border">
             <h2 className="font-bold">Brand Name Concepts</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">Ranked by uniqueness, memorability & trademarkability</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Generated from: <span className="font-medium text-foreground">"{product.name}"</span></p>
           </div>
           <div className="divide-y divide-border">
             {names.map((item, i) => (
@@ -163,31 +304,14 @@ function BrandTab({ copy, copied }: { copy: (t: string, i: string) => void; copi
             ))}
           </div>
         </div>
-
-        {/* Positioning */}
-        <div className="bg-card border border-border rounded-2xl p-5">
-          <h2 className="font-bold mb-3">Product Positioning</h2>
-          <div className="space-y-3">
-            {[
-              { label: "Core Promise", text: "Dermatologist-grade Vitamin C results without the prescription price tag." },
-              { label: "Target Enemy", text: "Cheap, watered-down serums that promise everything and deliver nothing." },
-              { label: "Unique Mechanism", text: "Patented Slow-Release Matrix delivers active ingredients 3x deeper than standard formulas." },
-              { label: "Brand Voice", text: "Confident, science-backed, and approachable. Educated but never condescending." },
-            ].map((item) => (
-              <div key={item.label} className="p-3 bg-secondary/40 rounded-xl">
-                <p className="text-xs font-bold text-primary uppercase tracking-wide mb-1">{item.label}</p>
-                <p className="text-sm leading-relaxed">{item.text}</p>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
 
-      {/* Color Palettes + Logo */}
+      {/* Right: Palettes + Positioning */}
       <div className="space-y-5">
         <div className="bg-card border border-border rounded-2xl overflow-hidden">
           <div className="p-5 border-b border-border">
             <h2 className="font-bold">Color Palettes</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Matched to your {product.style} brand style</p>
           </div>
           <div className="p-5 space-y-4">
             {palettes.map((palette, i) => (
@@ -198,11 +322,7 @@ function BrandTab({ copy, copied }: { copy: (t: string, i: string) => void; copi
                 </div>
                 <div className="flex gap-2">
                   {palette.colors.map((color) => (
-                    <div
-                      key={color}
-                      className="flex-1 h-12 rounded-xl border border-border relative group cursor-pointer"
-                      style={{ backgroundColor: color }}
-                    >
+                    <div key={color} className="flex-1 h-12 rounded-xl border border-border relative group cursor-pointer" style={{ backgroundColor: color }}>
                       <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                         <span className="text-xs font-mono bg-background/90 px-1.5 py-0.5 rounded text-foreground shadow">{color}</span>
                       </div>
@@ -214,23 +334,18 @@ function BrandTab({ copy, copied }: { copy: (t: string, i: string) => void; copi
           </div>
         </div>
 
-        {/* Logo Direction */}
         <div className="bg-card border border-border rounded-2xl p-5">
-          <h2 className="font-bold mb-4">Logo Concepts</h2>
+          <h2 className="font-bold mb-3">Product Positioning</h2>
           <div className="space-y-3">
             {[
-              { style: "Wordmark", desc: "Elegant serif typeface in deep rose. Letter-spacing +0.08em. No icon — the brand name IS the logo.", preview: "bg-gradient-to-br from-rose-100 to-pink-50" },
-              { style: "Icon + Wordmark", desc: "Abstract glow drop icon (representing a serum droplet with radiating lines). Clean sans-serif name below.", preview: "bg-gradient-to-br from-violet-100 to-indigo-50" },
-              { style: "Monogram", desc: "Single letter 'L' or 'G' in a circle, embossed gold foil effect. High-end packaging feel.", preview: "bg-gradient-to-br from-amber-100 to-yellow-50" },
-            ].map((item, i) => (
-              <div key={i} className="flex items-center gap-4 p-3 border border-border rounded-xl hover:border-primary/20 transition-colors">
-                <div className={`w-14 h-14 rounded-xl ${item.preview} shrink-0 flex items-center justify-center`}>
-                  <Palette className="h-5 w-5 text-muted-foreground/50" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold">{item.style}</p>
-                  <p className="text-xs text-muted-foreground leading-relaxed">{item.desc}</p>
-                </div>
+              { label: "Core Promise", text: `The ${product.style === "luxury" ? "most premium" : product.style === "minimal" ? "cleanest" : "most effective"} version of ${product.name} — real results, no filler.` },
+              { label: "Target Enemy", text: product.audience ? `Competitors ignoring ${product.audience} — we speak directly to them.` : "Generic, over-hyped competitors with no real differentiation." },
+              { label: "Unique Mechanism", text: product.desc ? `${product.desc.slice(0, 80)}${product.desc.length > 80 ? "..." : ""}` : "A proprietary formula delivering active results faster than anything else in the category." },
+              { label: "Brand Voice", text: product.style === "luxury" ? "Aspirational, elevated, and quietly confident." : product.style === "viral-tiktok" ? "Raw, direct, and unapologetically bold — built for the scroll." : "Clear, trustworthy, and results-focused." },
+            ].map((item) => (
+              <div key={item.label} className="p-3 bg-secondary/40 rounded-xl">
+                <p className="text-xs font-bold text-primary uppercase tracking-wide mb-1">{item.label}</p>
+                <p className="text-sm leading-relaxed">{item.text}</p>
               </div>
             ))}
           </div>
@@ -240,20 +355,21 @@ function BrandTab({ copy, copied }: { copy: (t: string, i: string) => void; copi
   );
 }
 
-function HooksTab({ copy, copied }: { copy: (t: string, i: string) => void; copied: string | null }) {
+function HooksTab({ copy, copied, product }: { copy: (t: string, i: string) => void; copied: string | null; product: ProductData }) {
+  const p = product.name;
   const hooks = [
-    { hook: "Stop buying skincare that sits on TOP of your skin. This serum goes THROUGH it.", score: 97, type: "Education" },
-    { hook: "I was embarrassed to go makeup-free for 3 years. Then I tried this.", score: 95, type: "Vulnerability" },
-    { hook: "Dermatologists literally recommend Vitamin C but won't tell you WHICH one. Here's the secret.", score: 94, type: "Authority" },
-    { hook: "Why does this $38 serum outperform every $200 serum I've tried? Let's break it down.", score: 93, type: "Comparison" },
-    { hook: "If you have ONE skincare product in your routine, let it be this.", score: 91, type: "Simplicity" },
-    { hook: "POV: You finally found the serum everyone on Sephora keeps selling out of.", score: 90, type: "Social Proof" },
-    { hook: "Vitamin C sounds boring until you see what it actually does to your skin.", score: 89, type: "Curiosity" },
-    { hook: "My esthetician said this — most people are using Vitamin C WRONG. Here's why.", score: 88, type: "Expert" },
-    { hook: "Before you spend another $100 on skincare, watch this (I wish someone told me sooner).", score: 87, type: "Value" },
-    { hook: "This ingredient is in every celebrity skincare routine and nobody talks about it.", score: 86, type: "Exclusive" },
-    { hook: "I gave my skeptical mom this serum. She ordered 3 more for her friends. That's the review.", score: 92, type: "Story" },
-    { hook: "30 days. One serum. The glow I've been chasing for 5 years.", score: 90, type: "Transformation" },
+    { hook: `Stop wasting money on products that don't work. This is what actually changed everything — ${p}.`, score: 97, type: "Pain Point" },
+    { hook: `I was embarrassed to go out without makeup for 3 years. Then I found ${p}.`, score: 95, type: "Vulnerability" },
+    { hook: `Why does ${p} outperform every expensive alternative I've tried? Let's break it down.`, score: 93, type: "Comparison" },
+    { hook: `If you have ONE product in your routine, let it be ${p}.`, score: 91, type: "Simplicity" },
+    { hook: `POV: You finally found the product everyone keeps selling out of. (It's ${p}.)`, score: 90, type: "Social Proof" },
+    { hook: `${p} sounds simple until you see what it actually does in 30 days.`, score: 89, type: "Curiosity" },
+    { hook: `Before you spend another dollar on anything else, watch this — it's about ${p}.`, score: 88, type: "Value" },
+    { hook: `I gave my most skeptical friend ${p}. She ordered two more bottles. That's the review.`, score: 92, type: "Story" },
+    { hook: `30 days. ${p}. The results I've been chasing for years.`, score: 90, type: "Transformation" },
+    { hook: `This is why 80% of products fail — and why ${p} is different.`, score: 87, type: "Education" },
+    { hook: `Nobody talks about ${p} yet. That's about to change.`, score: 86, type: "Exclusive" },
+    { hook: `I was extremely skeptical about ${p}. Then week two happened.`, score: 94, type: "Authority" },
   ];
 
   return (
@@ -293,19 +409,20 @@ function HooksTab({ copy, copied }: { copy: (t: string, i: string) => void; copi
   );
 }
 
-function ScriptsTab({ copy, copied }: { copy: (t: string, i: string) => void; copied: string | null }) {
+function ScriptsTab({ copy, copied, product }: { copy: (t: string, i: string) => void; copied: string | null; product: ProductData }) {
+  const p = product.name;
   const scripts = [
     {
       title: "30s UGC Script — Transformation",
       platform: "TikTok / Reels",
       script: `[0:00-0:03 | HOOK]
-Direct to camera: "I genuinely did not believe a serum could change my skin this fast. Then week two happened."
+Direct to camera: "I genuinely did not believe ${p} could work this fast. Then week two happened."
 
 [0:03-0:12 | PROBLEM]
-"For three years I wore full-coverage foundation every single day. I was embarrassed by my uneven texture and hyperpigmentation. I'd tried toners, acids, retinol — nothing worked."
+"For years I tried everything — nothing worked. I felt like I'd wasted hundreds of dollars and nothing was changing."
 
 [0:12-0:22 | SOLUTION]
-B-roll of applying GlowSkin serum. VO: "My esthetician told me to try this Vitamin C serum. Day 7 I noticed my skin was brighter. Day 21 I went foundation-free for the first time in years."
+B-roll of applying ${p}. VO: "Then I found ${p}. Day 7 I noticed a real difference. Day 21 I couldn't believe the results."
 
 [0:22-0:30 | CTA]
 Close-up of glowing skin + product. VO: "Link in bio. They have a 30-day guarantee so there's nothing to lose — but based on my results? You won't need it."`,
@@ -314,19 +431,19 @@ Close-up of glowing skin + product. VO: "Link in bio. They have a 30-day guarant
       title: "60s VSL — Direct Response",
       platform: "Meta / YouTube",
       script: `[0:00-0:05 | HOOK]
-"Most skincare fails because it sits on TOP of your skin. It never gets absorbed. This serum is different."
+"Most products in this space fail because they never actually work. ${p} is built differently — and here's proof."
 
 [0:05-0:20 | AGITATE]
-"You've probably spent hundreds — maybe thousands — on serums, treatments, and products that promised everything. And you're still here. Still dealing with the same issues. That's not your fault. The industry is built on products that look great in ads and do nothing in real life."
+"You've probably spent hundreds on products that promised everything. And you're still here. Still dealing with the same problem. That's not your fault. The market is full of hype and no results."
 
 [0:20-0:40 | SOLUTION]
-"GlowSkin's Vitamin C Serum uses a Slow-Release Matrix that delivers active ingredients past the surface layer of your skin — where real change actually happens. That's why 87% of users see visible improvement within 2 weeks. Not 2 months. 2 weeks."
+"${p} uses a different approach — one that actually delivers results where it counts. That's why customers see visible improvement within 2 weeks. Not 2 months. 2 weeks."
 
 [0:40-0:52 | PROOF]
-Text overlays: "50,000+ bottles sold · 4.9/5 from 12,847 reviews · Featured in Vogue, Byrdie, and Harper's Bazaar"
+Text overlays: "50,000+ units sold · 4.9/5 from 12,847 reviews · As seen in Vogue, Byrdie, and Harper's Bazaar"
 
 [0:52-1:00 | OFFER]
-"Right now, use code GLOW for 20% off your first bottle — plus free shipping and a 30-day money-back guarantee. Click below. Your skin will thank you."`,
+"Right now, get 20% off your first order — plus free shipping and a 30-day money-back guarantee. Click below. You won't regret it."`,
     },
   ];
 
@@ -451,7 +568,7 @@ function VideoAdsTab() {
   );
 }
 
-function AudienceTab() {
+function AudienceTab({ product }: { product: ProductData }) {
   const audiences = [
     {
       segment: "The Frustrated Skincare Enthusiast",
@@ -616,7 +733,7 @@ const photoShots = [
   },
 ];
 
-function ProductPhotosTab() {
+function ProductPhotosTab({ product }: { product: ProductData }) {
   const [downloading, setDownloading] = useState<number | null>(null);
   const [expanded, setExpanded] = useState<number | null>(null);
 
@@ -633,7 +750,7 @@ function ProductPhotosTab() {
           <Camera className="h-5 w-5 text-white" />
         </div>
         <div>
-          <p className="text-sm font-semibold mb-0.5">AI Product Photos — GlowSkin Vitamin C Serum</p>
+          <p className="text-sm font-semibold mb-0.5">AI Product Photos — {product.name}</p>
           <p className="text-xs text-muted-foreground leading-relaxed">
             4 photorealistic images generated based on your product, brand style, and target audience.
             Download as PNG or use the AI prompt to generate with Midjourney, DALL·E, or Firefly.

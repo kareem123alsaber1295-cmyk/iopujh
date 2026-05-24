@@ -6,8 +6,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Sparkles, LayoutDashboard, Palette, Megaphone, FileText,
   Video, Image, Package, Settings, Menu, X, Bell, Search,
-  ChevronRight, LogOut, User, Zap
+  ChevronRight, LogOut, User, Zap, LifeBuoy
 } from "lucide-react";
+import SupportBubble from "@/components/support-bubble";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -17,6 +18,7 @@ const navItems = [
   { href: "/dashboard/video-ads", label: "Video Ads", icon: Video },
   { href: "/dashboard/picture-ads", label: "Picture Ads", icon: Image },
   { href: "/dashboard/product-research", label: "Product Research", icon: Package },
+  { href: "/dashboard/support", label: "Support", icon: LifeBuoy },
 ];
 
 const bottomItems = [
@@ -173,6 +175,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {children}
         </main>
       </div>
+      <SupportBubble />
     </div>
   );
 }

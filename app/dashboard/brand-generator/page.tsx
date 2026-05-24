@@ -42,6 +42,9 @@ export default function BrandGeneratorPage() {
   const [progress, setProgress] = useState(0);
   const [progressLabel, setProgressLabel] = useState("");
   const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set());
+  const [productName, setProductName] = useState("");
+  const [productDesc, setProductDesc] = useState("");
+  const [targetAudience, setTargetAudience] = useState("");
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -112,6 +115,14 @@ export default function BrandGeneratorPage() {
     }
 
     await new Promise((r) => setTimeout(r, 300));
+    // Save inputs so results page can personalise output
+    localStorage.setItem("ll_product", JSON.stringify({
+      name: productName || "Your Product",
+      desc: productDesc,
+      audience: targetAudience,
+      style: selectedStyle,
+      outputs: Array.from(selectedOutputs),
+    }));
     router.push("/dashboard/results");
   }
 
@@ -170,18 +181,18 @@ export default function BrandGeneratorPage() {
             <div className="grid sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium mb-1.5">Product Name <span className="text-primary">*</span></label>
-                <input type="text" placeholder="e.g. GlowSkin Vitamin C Serum" required className="w-full h-11 px-4 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-all" />
+                <input type="text" placeholder="e.g. GlowSkin Vitamin C Serum" required value={productName} onChange={(e) => setProductName(e.target.value)} className="w-full h-11 px-4 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-all" />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1.5">
                   <span className="flex items-center gap-1.5"><Target className="h-3.5 w-3.5" />Target Audience</span>
                 </label>
-                <input type="text" placeholder="e.g. Women 25-40 interested in skincare" className="w-full h-11 px-4 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-all" />
+                <input type="text" placeholder="e.g. Women 25-40 interested in skincare" value={targetAudience} onChange={(e) => setTargetAudience(e.target.value)} className="w-full h-11 px-4 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-all" />
               </div>
             </div>
             <div>
               <label className="block text-sm font-medium mb-1.5">Product Description</label>
-              <textarea placeholder="Describe your product, key benefits, unique ingredients, or what makes it special..." rows={3} className="w-full px-4 py-3 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-all resize-none" />
+              <textarea placeholder="Describe your product, key benefits, unique ingredients, or what makes it special..." rows={3} value={productDesc} onChange={(e) => setProductDesc(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-all resize-none" />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1.5">
