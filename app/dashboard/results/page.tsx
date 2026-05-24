@@ -1,12 +1,12 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import {
   Sparkles, Copy, Check, Download, ArrowLeft, Palette,
   Megaphone, FileText, Video, Image, Users, ChevronRight,
   Star, Target, Zap, RefreshCw, Camera, Aperture, SunMedium,
-  Layers, Share2
+  Layers, Share2, Loader2
 } from "lucide-react";
 
 const tabs = [
@@ -59,16 +59,110 @@ function deriveBrandNames(productName: string): { name: string; tagline: string;
   ];
 }
 
+const STYLE_MAP: Record<string, string> = {
+  luxury: "dark", "viral-tiktok": "bold", minimal: "clean",
+  feminine: "natural", bold: "bold", wellness: "natural", premium: "clean",
+};
+const PHOTO_ANGLES = ["Hero Shot", "Lifestyle Context", "Ad Composition", "Detail Close-up"];
+const PHOTO_FORMATS = ["square", "portrait", "landscape", "square"];
+
 export default function ResultsPage() {
   const product = useProductData();
   const [activeTab, setActiveTab] = useState("brand");
   const [copied, setCopied] = useState<string | null>(null);
+  const [photoImages, setPhotoImages] = useState<(string | null)[]>([null, null, null, null]);
+  const [photoLoading, setPhotoLoading] = useState<boolean[]>([false, false, false, false]);
+  const [regenerating, setRegenerating] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const photosTriggeredRef = useRef(false);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   function copy(text: string, id: string) {
     navigator.clipboard.writeText(text);
     setCopied(id);
     setTimeout(() => setCopied(null), 2000);
   }
+
+  async function generatePhotos(force = false) {
+    if (!force && photosTriggeredRef.current) return;
+    photosTriggeredRef.current = true;
+    setPhotoLoading([true, true, true, true]);
+    setPhotoImages([null, null, null, null]);
+    const brandStyle = STYLE_MAP[product.style] || "clean";
+    await Promise.all(
+      PHOTO_ANGLES.map(async (angle, idx) => {
+        try {
+          const res = await fetch("/api/generate-product-photo", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              productName: product.name,
+              productDescription: product.desc,
+              brandStyle,
+              targetAudience: product.audience,
+              imageType: PHOTO_FORMATS[idx],
+              angle,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Generation failed");
+          setPhotoImages((prev) => { const n = [...prev]; n[idx] = data.b64; return n; });
+        } catch (err) {
+          console.error(`Photo [${angle}] error:`, err);
+        } finally {
+          setPhotoLoading((prev) => { const n = [...prev]; n[idx] = false; return n; });
+        }
+      })
+    );
+  }
+
+  async function handleRegenerate() {
+    if (activeTab === "photos") {
+      photosTriggeredRef.current = false;
+      generatePhotos(true);
+    } else {
+      setRegenerating(true);
+      setTimeout(() => setRegenerating(false), 700);
+    }
+  }
+
+  async function handleExportPDF() {
+    if (!contentRef.current) return;
+    setExporting(true);
+    try {
+      const { default: html2canvas } = await import("html2canvas");
+      const { default: jsPDF } = await import("jspdf");
+      const canvas = await html2canvas(contentRef.current, { scale: 2, useCORS: true, logging: false });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pw = pdf.internal.pageSize.getWidth();
+      const ph = pdf.internal.pageSize.getHeight();
+      pdf.setFillColor(99, 102, 241);
+      pdf.rect(0, 0, pw, 18, "F");
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(12);
+      pdf.text("LaunchLabs Brand Kit", 10, 12);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(9);
+      pdf.text(product.name, pw - 10, 12, { align: "right" });
+      const imgW = pw - 20;
+      const imgH = (canvas.height / canvas.width) * imgW;
+      pdf.addImage(imgData, "PNG", 10, 22, imgW, Math.min(imgH, ph - 28));
+      pdf.save("launchlabs-brand-kit.pdf");
+    } catch (err) {
+      console.error("PDF export error:", err);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  useEffect(() => {
+    if (activeTab === "photos" && !photosTriggeredRef.current && product.name && product.name !== "Your Product") {
+      generatePhotos();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, product.name]);
 
   return (
     <div>
@@ -90,19 +184,27 @@ export default function ResultsPage() {
             </div>
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <button className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border hover:bg-secondary">
-              <RefreshCw className="h-3.5 w-3.5" />
+            <button
+              onClick={handleRegenerate}
+              disabled={regenerating || photoLoading.some(Boolean)}
+              className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg border border-border hover:bg-secondary disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${regenerating ? "animate-spin" : ""}`} />
               Regenerate
             </button>
-            <button className="flex items-center gap-1.5 gradient-bg text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:opacity-90 transition-opacity">
-              <Download className="h-3.5 w-3.5" />
-              Export PDF
+            <button
+              onClick={handleExportPDF}
+              disabled={exporting}
+              className="flex items-center gap-1.5 gradient-bg text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              {exporting ? "Exporting…" : "Export PDF"}
             </button>
           </div>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+      <div ref={contentRef} className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
         {/* Tabs */}
         <div className="flex gap-1 bg-secondary/50 p-1 rounded-2xl mb-6 overflow-x-auto">
           {tabs.map((tab) => (
@@ -133,7 +235,7 @@ export default function ResultsPage() {
             transition={{ duration: 0.25 }}
           >
             {activeTab === "brand" && <BrandTab copy={copy} copied={copied} product={product} />}
-            {activeTab === "photos" && <ProductPhotosTab product={product} />}
+            {activeTab === "photos" && <ProductPhotosTab product={product} images={photoImages} loading={photoLoading} onRegenerate={() => { photosTriggeredRef.current = false; generatePhotos(true); }} />}
             {activeTab === "hooks" && <HooksTab copy={copy} copied={copied} product={product} />}
             {activeTab === "scripts" && <ScriptsTab copy={copy} copied={copied} product={product} />}
             {activeTab === "picture-ads" && <PictureAdsTab />}
@@ -733,15 +835,29 @@ const photoShots = [
   },
 ];
 
-function ProductPhotosTab({ product }: { product: ProductData }) {
-  const [downloading, setDownloading] = useState<number | null>(null);
-  const [expanded, setExpanded] = useState<number | null>(null);
-
-  async function fakeDownload(i: number) {
-    setDownloading(i);
-    await new Promise((r) => setTimeout(r, 1400));
-    setDownloading(null);
+function ProductPhotosTab({
+  product,
+  images,
+  loading,
+  onRegenerate,
+}: {
+  product: ProductData;
+  images: (string | null)[];
+  loading: boolean[];
+  onRegenerate: () => void;
+}) {
+  function downloadImage(b64: string, label: string) {
+    const a = document.createElement("a");
+    a.href = `data:image/png;base64,${b64}`;
+    a.download = `${product.name.replace(/\s+/g, "-").toLowerCase()}-${label.replace(/\s+/g, "-").toLowerCase()}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   }
+
+  const isGenerating = loading.some(Boolean);
+  const doneCount = loading.filter((l) => !l).length;
+  const hasAny = images.some(Boolean);
 
   return (
     <div>
@@ -749,12 +865,20 @@ function ProductPhotosTab({ product }: { product: ProductData }) {
         <div className="w-10 h-10 gradient-bg rounded-xl flex items-center justify-center shrink-0">
           <Camera className="h-5 w-5 text-white" />
         </div>
-        <div>
+        <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold mb-0.5">AI Product Photos — {product.name}</p>
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            4 photorealistic images generated based on your product, brand style, and target audience.
-            Download as PNG or use the AI prompt to generate with Midjourney, DALL·E, or Firefly.
-          </p>
+          {isGenerating ? (
+            <p className="text-xs text-primary font-medium flex items-center gap-1.5">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Generating… {doneCount} of {photoShots.length} ready (~20 sec each)
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              {hasAny
+                ? "4 photorealistic images generated. Download as PNG."
+                : "4 photorealistic images generated based on your product, brand style, and target audience."}
+            </p>
+          )}
         </div>
       </div>
 
@@ -767,97 +891,89 @@ function ProductPhotosTab({ product }: { product: ProductData }) {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.1, duration: 0.4 }}
           >
-            {/* Fake photo preview */}
-            <div
-              className={`relative h-56 bg-gradient-to-br ${shot.gradient} overflow-hidden cursor-pointer`}
-              onClick={() => setExpanded(expanded === i ? null : i)}
-            >
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="relative w-32 h-40">
-                  <div className="absolute inset-x-1/4 inset-y-0 rounded-3xl bg-white/70 shadow-xl shadow-black/10 backdrop-blur-sm border border-white/50" />
-                  <div className="absolute inset-x-1/3 top-0 h-6 rounded-xl bg-white/60 shadow-sm" />
-                  <div className="absolute inset-x-1/4 top-10 bottom-8 flex flex-col items-center justify-center gap-1 px-3">
-                    <div className={`w-full h-1.5 rounded-full ${shot.shimmer[0]}`} />
-                    <div className={`w-3/4 h-1 rounded-full ${shot.shimmer[1]}`} />
-                    <div className={`w-1/2 h-1 rounded-full ${shot.shimmer[2]}`} />
-                  </div>
-                  <div className={`absolute inset-x-1/3 top-0 h-4 rounded-lg ${shot.accent} opacity-80`} />
+            {loading[i] ? (
+              <>
+                <div className="h-56 bg-secondary animate-pulse" />
+                <div className="p-4 flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary shrink-0" />
+                  <p className="text-sm text-muted-foreground">Generating {PHOTO_ANGLES[i]}…</p>
                 </div>
-              </div>
-
-              {i === 1 && (
-                <>
-                  <div className="absolute bottom-4 left-4 w-16 h-4 bg-stone-300/40 rounded-full blur-sm" />
-                  <div className="absolute top-8 right-6 w-8 h-12 bg-green-200/30 rounded-full blur-sm" />
-                  <div className="absolute inset-0 bg-gradient-to-t from-rose-200/30 to-transparent" />
-                </>
-              )}
-              {i === 2 && (
-                <>
-                  <div className="absolute bottom-0 inset-x-0 h-12 gradient-bg opacity-20" />
-                  <div className="absolute top-3 right-3 bg-white/80 rounded-full px-2 py-0.5 text-[10px] font-black text-violet-700 shadow">30-Day Guarantee</div>
-                  <div className="absolute bottom-3 left-3 right-3 bg-white/70 rounded-lg px-2 py-1.5">
-                    <div className="h-1.5 bg-violet-400/60 rounded w-3/4 mb-1" />
-                    <div className="h-1 bg-violet-300/50 rounded w-1/2" />
+              </>
+            ) : images[i] ? (
+              <>
+                <div className="relative overflow-hidden">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={`data:image/png;base64,${images[i]}`}
+                    alt={`${product.name} – ${shot.type}`}
+                    className="w-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
+                  <div className="absolute top-3 left-3">
+                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-black/60 text-white backdrop-blur-sm">
+                      {shot.type}
+                    </span>
                   </div>
-                </>
-              )}
-              {i === 3 && (
-                <div className="absolute inset-0 bg-gradient-to-br from-fuchsia-400/20 to-pink-400/20" />
-              )}
-
-              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors flex items-center justify-center">
-                <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 text-white text-xs font-medium px-3 py-1.5 rounded-full">
-                  View prompt
+                  <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={() => downloadImage(images[i]!, shot.type)}
+                      className="p-2 rounded-lg bg-black/60 text-white backdrop-blur-sm hover:bg-black/80 transition-colors"
+                    >
+                      <Download className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <div className="absolute top-3 left-3 bg-black/50 text-white text-[10px] font-mono px-2 py-1 rounded-lg backdrop-blur-sm">
-                {shot.aspectLabel}
-              </div>
-            </div>
-
-            <AnimatePresence>
-              {expanded === i && (
-                <motion.div
-                  className="border-t border-border bg-secondary/30 px-4 py-3"
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.2 }}
+                <div className="px-4 py-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold">{shot.type}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{shot.desc}</p>
+                  </div>
+                  <button
+                    onClick={() => downloadImage(images[i]!, shot.type)}
+                    className="flex items-center gap-1.5 text-xs text-primary font-medium hover:underline shrink-0 ml-3"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download PNG
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div
+                  className={`relative h-56 bg-gradient-to-br ${shot.gradient} overflow-hidden`}
                 >
-                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">AI Prompt</p>
-                  <p className="text-xs text-muted-foreground italic leading-relaxed">"{shot.prompt}"</p>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            <div className="p-4">
-              <div className="flex items-start justify-between gap-3 mb-2">
-                <div className="flex items-center gap-2">
-                  <div className={`w-7 h-7 rounded-lg ${shot.accent} flex items-center justify-center`}>
-                    <shot.icon className="h-3.5 w-3.5 text-white" />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="relative w-32 h-40">
+                      <div className="absolute inset-x-1/4 inset-y-0 rounded-3xl bg-white/70 shadow-xl shadow-black/10 backdrop-blur-sm border border-white/50" />
+                      <div className="absolute inset-x-1/3 top-0 h-6 rounded-xl bg-white/60 shadow-sm" />
+                      <div className="absolute inset-x-1/4 top-10 bottom-8 flex flex-col items-center justify-center gap-1 px-3">
+                        <div className={`w-full h-1.5 rounded-full ${shot.shimmer[0]}`} />
+                        <div className={`w-3/4 h-1 rounded-full ${shot.shimmer[1]}`} />
+                        <div className={`w-1/2 h-1 rounded-full ${shot.shimmer[2]}`} />
+                      </div>
+                      <div className={`absolute inset-x-1/3 top-0 h-4 rounded-lg ${shot.accent} opacity-80`} />
+                    </div>
                   </div>
-                  <h3 className="font-bold text-sm">{shot.type}</h3>
+                  <div className="absolute top-3 left-3 bg-black/50 text-white text-[10px] font-mono px-2 py-1 rounded-lg backdrop-blur-sm">
+                    {shot.aspectLabel}
+                  </div>
                 </div>
-                <button
-                  onClick={() => fakeDownload(i)}
-                  disabled={downloading === i}
-                  className="flex items-center gap-1.5 gradient-bg text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:opacity-90 transition-opacity disabled:opacity-70"
-                >
-                  {downloading === i
-                    ? <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    : <Download className="h-3 w-3" />
-                  }
-                  {downloading === i ? "Saving..." : "Download PNG"}
-                </button>
-              </div>
-              <p className="text-xs text-muted-foreground mb-3 leading-relaxed">{shot.desc}</p>
-              <div className="flex flex-wrap gap-1.5">
-                {shot.tags.map((tag) => (
-                  <span key={tag} className="text-xs bg-secondary px-2 py-0.5 rounded-full text-muted-foreground">{tag}</span>
-                ))}
-              </div>
-            </div>
+                <div className="p-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className={`w-7 h-7 rounded-lg ${shot.accent} flex items-center justify-center`}>
+                      <shot.icon className="h-3.5 w-3.5 text-white" />
+                    </div>
+                    <h3 className="font-bold text-sm">{shot.type}</h3>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{shot.desc}</p>
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {shot.tags.map((tag) => (
+                      <span key={tag} className="text-xs bg-secondary px-2 py-0.5 rounded-full text-muted-foreground">{tag}</span>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
           </motion.div>
         ))}
       </div>
@@ -867,8 +983,12 @@ function ProductPhotosTab({ product }: { product: ProductData }) {
           <p className="text-sm font-semibold">Not quite right?</p>
           <p className="text-xs text-muted-foreground mt-0.5">Adjust your brand style or product description and regenerate.</p>
         </div>
-        <button className="flex items-center gap-2 text-xs font-semibold text-primary border border-primary/30 px-4 py-2 rounded-xl hover:bg-primary/5 transition-colors whitespace-nowrap">
-          <RefreshCw className="h-3.5 w-3.5" />
+        <button
+          onClick={onRegenerate}
+          disabled={isGenerating}
+          className="flex items-center gap-2 text-xs font-semibold text-primary border border-primary/30 px-4 py-2 rounded-xl hover:bg-primary/5 transition-colors whitespace-nowrap disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${isGenerating ? "animate-spin" : ""}`} />
           Regenerate photos
         </button>
       </div>
