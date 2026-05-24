@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 function getClient() {
   return new OpenAI();
@@ -21,32 +22,20 @@ const SIZE_MAP: Record<string, "1024x1024" | "1536x1024" | "1024x1536"> = {
   story: "1024x1536",
 };
 
-const ANGLES = [
-  {
-    name: "Hero Shot",
-    suffix:
-      "Product centered and facing forward, perfectly lit from front and sides, sharp focus on label and packaging, hero product photography style.",
-  },
-  {
-    name: "Lifestyle Context",
-    suffix:
-      "Product placed in an aspirational real-world lifestyle context that tells a story about the customer's life and how the product fits into it.",
-  },
-  {
-    name: "Detail Close-up",
-    suffix:
-      "Macro close-up shot highlighting premium texture, label typography, materials, and craftsmanship. Shallow depth of field, sharp details.",
-  },
-  {
-    name: "Ad Composition",
-    suffix:
-      "Styled flat lay or arranged composition with complementary props and negative space intentionally left for ad headline overlay text. Balanced, editorial layout.",
-  },
-];
+const ANGLE_SUFFIXES: Record<string, string> = {
+  "Hero Shot":
+    "Product centered and facing forward, perfectly lit from front and sides, sharp focus on label and packaging, hero product photography style.",
+  "Lifestyle Context":
+    "Product placed in an aspirational real-world lifestyle context that tells a story about the customer's life and how the product fits into it.",
+  "Detail Close-up":
+    "Macro close-up shot highlighting premium texture, label typography, materials, and craftsmanship. Shallow depth of field, sharp details.",
+  "Ad Composition":
+    "Styled flat lay or arranged composition with complementary props and negative space intentionally left for ad headline overlay text. Balanced, editorial layout.",
+};
 
 export async function POST(req: NextRequest) {
   try {
-    const { productName, productDescription, brandStyle, targetAudience, imageType } =
+    const { productName, productDescription, brandStyle, targetAudience, imageType, angle } =
       await req.json();
 
     if (!productName?.trim()) {
@@ -56,37 +45,33 @@ export async function POST(req: NextRequest) {
     const client = getClient();
     const size = SIZE_MAP[imageType as string] ?? "1024x1024";
     const styleDesc = STYLE_GUIDES[brandStyle as string] ?? STYLE_GUIDES.clean;
+    const angleSuffix = ANGLE_SUFFIXES[angle as string] ?? "";
 
     const descPart = productDescription?.trim() ? `${productDescription.trim()}. ` : "";
     const audiencePart = targetAudience?.trim() ? ` Target audience: ${targetAudience.trim()}.` : "";
 
-    const basePrompt =
+    const prompt =
       `Realistic ecommerce product photography for ${productName}. ` +
       descPart +
       styleDesc +
       `. Professional product photography, modern ecommerce ad style, realistic packaging, ` +
       `no fake brand logos, no distorted text, no people unless requested, high quality, ` +
       `conversion-focused, suitable for Shopify, Meta ads, and TikTok ads.` +
-      audiencePart;
+      audiencePart +
+      (angleSuffix ? ` ${angleSuffix}` : "");
 
-    const requests = ANGLES.map((angle) =>
-      client.images.generate({
-        model: "gpt-image-1",
-        prompt: `${basePrompt} ${angle.suffix}`,
-        n: 1,
-        size,
-        quality: "high",
-      })
-    );
+    const response = await client.images.generate({
+      model: "gpt-image-1",
+      prompt,
+      n: 1,
+      size,
+      quality: "medium",
+    });
 
-    const responses = await Promise.all(requests);
-
-    const images = responses.map((res, i) => ({
-      angle: ANGLES[i].name,
-      b64: res.data?.[0]?.b64_json ?? null,
-    }));
-
-    return NextResponse.json({ images });
+    return NextResponse.json({
+      angle,
+      b64: response.data?.[0]?.b64_json ?? null,
+    });
   } catch (err) {
     console.error("generate-product-photo error:", err);
     const message = err instanceof Error ? err.message : "Generation failed";
