@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { Download, Camera, Loader2, AlertCircle, Sparkles, RefreshCw } from "lucide-react";
 
 const IMAGE_FORMATS = [
@@ -17,36 +17,27 @@ const BRAND_STYLES = [
   { value: "natural", label: "Natural & Organic" },
 ];
 
-const CONCEPT_PLACEHOLDERS = [
-  {
-    title: "Hero Shot",
-    desc: "Centered product on clean background, front-facing, studio lighting",
-    gradient: "from-indigo-500/20 to-violet-500/20",
-    accent: "#6366F1",
-  },
-  {
-    title: "Lifestyle Context",
-    desc: "Product in aspirational real-world setting, tells the customer story",
-    gradient: "from-pink-500/20 to-rose-500/20",
-    accent: "#EC4899",
-  },
-  {
-    title: "Detail Close-up",
-    desc: "Macro shot highlighting texture, label, and premium craftsmanship",
-    gradient: "from-amber-500/20 to-orange-500/20",
-    accent: "#F59E0B",
-  },
-  {
-    title: "Ad Composition",
-    desc: "Styled flat lay with negative space ready for headline overlay",
-    gradient: "from-emerald-500/20 to-teal-500/20",
-    accent: "#10B981",
-  },
+const ANGLES = ["Hero Shot", "Lifestyle Context", "Detail Close-up", "Ad Composition"];
+
+const ANGLE_COLORS = ["#6366F1", "#EC4899", "#F59E0B", "#10B981"];
+const ANGLE_GRADIENTS = [
+  "from-indigo-500/20 to-violet-500/20",
+  "from-pink-500/20 to-rose-500/20",
+  "from-amber-500/20 to-orange-500/20",
+  "from-emerald-500/20 to-teal-500/20",
+];
+const ANGLE_DESCS = [
+  "Centered product on clean background, front-facing, studio lighting",
+  "Product in aspirational real-world setting, tells the customer story",
+  "Macro shot highlighting texture, label, and premium craftsmanship",
+  "Styled flat lay with negative space ready for headline overlay",
 ];
 
-interface GeneratedImage {
+interface ImageState {
   angle: string;
-  url: string | null;
+  b64: string | null;
+  loading: boolean;
+  error: string | null;
 }
 
 export default function PictureAdsPage() {
@@ -55,57 +46,77 @@ export default function PictureAdsPage() {
   const [brandStyle, setBrandStyle] = useState("clean");
   const [targetAudience, setTargetAudience] = useState("");
   const [imageFormat, setImageFormat] = useState("square");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [images, setImages] = useState<GeneratedImage[]>([]);
+  const [generating, setGenerating] = useState(false);
+  const [images, setImages] = useState<ImageState[]>([]);
 
-  async function handleGenerate() {
-    if (!productName.trim()) return;
-    setLoading(true);
-    setError(null);
+  const hasStarted = images.length > 0;
+  const allDone = hasStarted && images.every((img) => !img.loading);
 
+  async function fetchOne(angle: string, params: object): Promise<void> {
     try {
       const res = await fetch("/api/generate-product-photo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          productName: productName.trim(),
-          productDescription: productDescription.trim(),
-          brandStyle,
-          targetAudience: targetAudience.trim(),
-          imageType: imageFormat,
-        }),
+        body: JSON.stringify({ ...params, angle }),
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Generation failed");
-
-      setImages((data.images as GeneratedImage[]));
+      setImages((prev) =>
+        prev.map((img) =>
+          img.angle === angle ? { ...img, b64: data.b64, loading: false, error: null } : img
+        )
+      );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Generation failed");
-    } finally {
-      setLoading(false);
+      setImages((prev) =>
+        prev.map((img) =>
+          img.angle === angle
+            ? { ...img, loading: false, error: err instanceof Error ? err.message : "Failed" }
+            : img
+        )
+      );
     }
   }
 
-  async function downloadImage(url: string, angle: string) {
+  async function handleGenerate() {
+    if (!productName.trim()) return;
+    setGenerating(true);
+
+    const initial: ImageState[] = ANGLES.map((angle) => ({
+      angle,
+      b64: null,
+      loading: true,
+      error: null,
+    }));
+    setImages(initial);
+
+    const params = {
+      productName: productName.trim(),
+      productDescription: productDescription.trim(),
+      brandStyle,
+      targetAudience: targetAudience.trim(),
+      imageType: imageFormat,
+    };
+
+    await Promise.all(ANGLES.map((angle) => fetchOne(angle, params)));
+    setGenerating(false);
+  }
+
+  async function downloadImage(b64: string, angle: string) {
     try {
-      const res = await fetch(url);
+      const res = await fetch(`data:image/png;base64,${b64}`);
       const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      link.href = blobUrl;
+      link.href = url;
       link.download = `${productName.replace(/\s+/g, "-").toLowerCase()}-${angle.replace(/\s+/g, "-").toLowerCase()}.png`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      URL.revokeObjectURL(blobUrl);
+      URL.revokeObjectURL(url);
     } catch {
-      window.open(url, "_blank");
+      // fallback: nothing to open without a URL
     }
   }
-
-  const hasImages = images.length > 0;
 
   return (
     <div className="p-4 sm:p-6 max-w-6xl mx-auto">
@@ -190,15 +201,15 @@ export default function PictureAdsPage() {
 
         <button
           onClick={handleGenerate}
-          disabled={loading || !productName.trim()}
+          disabled={generating || !productName.trim()}
           className="w-full gradient-bg text-white font-semibold py-3 rounded-xl hover:opacity-90 transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
-          {loading ? (
+          {generating ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              Generating 4 photos — this takes ~20 seconds…
+              Generating — images appear as each one finishes…
             </>
-          ) : hasImages ? (
+          ) : allDone ? (
             <>
               <RefreshCw className="h-4 w-4" />
               Regenerate Photos
@@ -210,144 +221,115 @@ export default function PictureAdsPage() {
             </>
           )}
         </button>
-
-        {error && (
-          <div className="mt-3 flex items-start gap-2 text-sm text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-2.5 rounded-xl">
-            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-            <span>{error}</span>
-          </div>
-        )}
       </div>
 
-      {/* Results */}
-      <AnimatePresence mode="wait">
-        {loading ? (
-          <motion.div
-            key="skeleton"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="grid sm:grid-cols-2 gap-5"
-          >
-            {CONCEPT_PLACEHOLDERS.map((_, i) => (
-              <div
-                key={i}
-                className="bg-card border border-border rounded-2xl overflow-hidden"
-              >
-                <div className="h-56 bg-secondary animate-pulse" />
-                <div className="p-4 space-y-2">
-                  <div className="h-4 w-24 bg-secondary animate-pulse rounded-full" />
-                  <div className="h-3 w-40 bg-secondary animate-pulse rounded-full" />
-                </div>
-              </div>
-            ))}
-          </motion.div>
-        ) : hasImages ? (
-          <motion.div
-            key="generated"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="grid sm:grid-cols-2 gap-5"
-          >
-            {images.map((img, i) => (
+      {/* Grid */}
+      <div className="grid sm:grid-cols-2 gap-5">
+        {hasStarted
+          ? images.map((img, i) => (
               <motion.div
-                key={i}
+                key={img.angle}
                 className="bg-card border border-border rounded-2xl overflow-hidden group hover:border-primary/20 hover:shadow-lg hover:shadow-primary/5 transition-all"
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.06, duration: 0.4 }}
+              >
+                {img.loading ? (
+                  <>
+                    <div className="h-56 bg-secondary animate-pulse" />
+                    <div className="p-4 flex items-center gap-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                      <p className="text-sm text-muted-foreground">Generating {img.angle}…</p>
+                    </div>
+                  </>
+                ) : img.error ? (
+                  <>
+                    <div className="h-56 bg-secondary flex items-center justify-center">
+                      <div className="text-center px-6">
+                        <AlertCircle className="h-8 w-8 text-red-400 mx-auto mb-2" />
+                        <p className="text-xs text-red-400">{img.error}</p>
+                      </div>
+                    </div>
+                    <div className="px-4 py-3">
+                      <p className="text-sm font-semibold">{img.angle}</p>
+                    </div>
+                  </>
+                ) : img.b64 ? (
+                  <>
+                    <div className="relative">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={`data:image/png;base64,${img.b64}`}
+                        alt={`${productName} – ${img.angle}`}
+                        className="w-full object-cover"
+                      />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
+                      <div className="absolute top-3 left-3">
+                        <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-black/60 text-white backdrop-blur-sm">
+                          {img.angle}
+                        </span>
+                      </div>
+                      <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => downloadImage(img.b64!, img.angle)}
+                          className="p-2 rounded-lg bg-black/60 text-white backdrop-blur-sm hover:bg-black/80 transition-colors"
+                          title="Download"
+                        >
+                          <Download className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="px-4 py-3 flex items-center justify-between">
+                      <p className="text-sm font-semibold">{img.angle}</p>
+                      <button
+                        onClick={() => downloadImage(img.b64!, img.angle)}
+                        className="flex items-center gap-1.5 text-xs text-primary font-medium hover:underline"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                        Download PNG
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+              </motion.div>
+            ))
+          : ANGLES.map((angle, i) => (
+              <motion.div
+                key={angle}
+                className="bg-card border border-border rounded-2xl overflow-hidden"
                 initial={{ opacity: 0, y: 16 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.08, duration: 0.4 }}
               >
-                {img.url ? (
-                  <div className="relative">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={img.url}
-                      alt={`${productName} – ${img.angle}`}
-                      className="w-full object-cover"
-                    />
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
-                    <div className="absolute top-3 left-3">
-                      <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-black/60 text-white backdrop-blur-sm">
-                        {img.angle}
-                      </span>
-                    </div>
-                    <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => downloadImage(img.url!, img.angle)}
-                        className="p-2 rounded-lg bg-black/60 text-white backdrop-blur-sm hover:bg-black/80 transition-colors"
-                        title="Download"
-                      >
-                        <Download className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="h-56 bg-secondary flex items-center justify-center">
-                    <p className="text-sm text-muted-foreground">Image unavailable</p>
-                  </div>
-                )}
-
-                <div className="px-4 py-3 flex items-center justify-between">
-                  <p className="text-sm font-semibold">{img.angle}</p>
-                  {img.url && (
-                    <button
-                      onClick={() => downloadImage(img.url!, img.angle)}
-                      className="flex items-center gap-1.5 text-xs text-primary font-medium hover:underline"
+                <div
+                  className={`h-44 bg-gradient-to-br ${ANGLE_GRADIENTS[i]} flex items-center justify-center relative`}
+                >
+                  <Camera className="h-10 w-10 opacity-20" style={{ color: ANGLE_COLORS[i] }} />
+                  <div className="absolute top-3 left-3">
+                    <span
+                      className="text-xs font-bold px-2.5 py-1 rounded-full text-white"
+                      style={{ backgroundColor: ANGLE_COLORS[i] }}
                     >
-                      <Download className="h-3.5 w-3.5" />
-                      Download PNG
-                    </button>
-                  )}
+                      {angle}
+                    </span>
+                  </div>
+                </div>
+                <div className="p-4">
+                  <p className="text-sm font-semibold mb-1">{angle}</p>
+                  <p className="text-xs text-muted-foreground">{ANGLE_DESCS[i]}</p>
                 </div>
               </motion.div>
             ))}
-          </motion.div>
-        ) : (
-          <motion.div
-            key="placeholders"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-          >
-            <div className="flex items-center gap-2 mb-4">
-              <Sparkles className="h-4 w-4 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground font-medium">
-                4 photo styles will be generated — fill in the form above and click Generate
-              </p>
-            </div>
-            <div className="grid sm:grid-cols-2 gap-5">
-              {CONCEPT_PLACEHOLDERS.map((card, i) => (
-                <motion.div
-                  key={i}
-                  className="bg-card border border-border rounded-2xl overflow-hidden"
-                  initial={{ opacity: 0, y: 16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.08, duration: 0.4 }}
-                >
-                  <div
-                    className={`h-44 bg-gradient-to-br ${card.gradient} flex items-center justify-center relative`}
-                  >
-                    <Camera className="h-10 w-10 opacity-20" style={{ color: card.accent }} />
-                    <div className="absolute top-3 left-3">
-                      <span
-                        className="text-xs font-bold px-2.5 py-1 rounded-full text-white"
-                        style={{ backgroundColor: card.accent }}
-                      >
-                        {card.title}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="p-4">
-                    <p className="text-sm font-semibold mb-1">{card.title}</p>
-                    <p className="text-xs text-muted-foreground">{card.desc}</p>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      </div>
+
+      {!hasStarted && (
+        <div className="flex items-center gap-2 mt-4">
+          <Sparkles className="h-4 w-4 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
+            Fill in the form above and click Generate — 4 photos will appear one by one
+          </p>
+        </div>
+      )}
     </div>
   );
 }
