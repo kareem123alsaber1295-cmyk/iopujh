@@ -1,117 +1,345 @@
 "use client";
-import { motion } from "framer-motion";
-import { Image, Download, Copy } from "lucide-react";
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Download, Camera, Loader2, AlertCircle, Sparkles, RefreshCw } from "lucide-react";
 
-const pictureAds = [
+const IMAGE_FORMATS = [
+  { value: "square", label: "Square (1:1)", desc: "Meta Feed & TikTok" },
+  { value: "portrait", label: "Portrait (4:5)", desc: "Instagram Feed" },
+  { value: "story", label: "Story (9:16)", desc: "Stories & Reels" },
+  { value: "landscape", label: "Landscape (16:9)", desc: "YouTube & Meta Banner" },
+];
+
+const BRAND_STYLES = [
+  { value: "clean", label: "Clean & Minimal" },
+  { value: "bold", label: "Bold & Colorful" },
+  { value: "dark", label: "Dark Luxury" },
+  { value: "natural", label: "Natural & Organic" },
+];
+
+const CONCEPT_PLACEHOLDERS = [
   {
-    title: "Before/After Split",
-    format: "Static · Square (1:1)",
-    platform: "Meta & Instagram",
-    concept: "Left half shows dull, uneven skin texture. Right half shows glowing, even skin. Bold text overlay: 'Day 1 vs Day 30'. Product featured prominently in bottom corner with 5-star rating.",
-    elements: ["Split image layout", "Before/after contrast", "Bold typography", "Product badge", "Star rating"],
-    colors: ["#6366F1", "#EDE9FE", "#FFFFFF"],
-    angle: "Transformation",
+    title: "Hero Shot",
+    desc: "Centered product on clean background, front-facing, studio lighting",
+    gradient: "from-indigo-500/20 to-violet-500/20",
+    accent: "#6366F1",
   },
   {
-    title: "Ingredient Highlight",
-    format: "Static · 4:5 Portrait",
-    platform: "Instagram Feed",
-    concept: "Clean white background. Product bottle centered. Key ingredients floating around it with connecting lines and benefit callouts. Premium, scientific aesthetic. Bottom: 'Dermatologist formulated' badge.",
-    elements: ["Hero product shot", "Floating ingredient callouts", "Scientific aesthetic", "Trust badge", "Benefit bullets"],
-    colors: ["#FFFFFF", "#1E293B", "#6366F1"],
-    angle: "Education / Trust",
+    title: "Lifestyle Context",
+    desc: "Product in aspirational real-world setting, tells the customer story",
+    gradient: "from-pink-500/20 to-rose-500/20",
+    accent: "#EC4899",
   },
   {
-    title: "UGC Quote Overlay",
-    format: "Static · 9:16 Story",
-    platform: "Instagram Stories & TikTok",
-    concept: "Real customer photo as background (blurred edges). Large testimonial quote in center: 'I\'ve tried 20 serums. This is the only one I\'ve reordered.' Star rating + name underneath. Gradient overlay at bottom with CTA.",
-    elements: ["Customer photo background", "Pull quote typography", "Star rating", "Gradient CTA bar", "Trust signal"],
-    colors: ["#EC4899", "#6366F1", "#FFFFFF"],
-    angle: "Social Proof",
+    title: "Detail Close-up",
+    desc: "Macro shot highlighting texture, label, and premium craftsmanship",
+    gradient: "from-amber-500/20 to-orange-500/20",
+    accent: "#F59E0B",
   },
   {
-    title: "Problem/Solution",
-    format: "Static · Landscape (16:9)",
-    platform: "YouTube Thumbnail & Meta",
-    concept: "Bold red headline on left: 'Still using that serum that doesn\'t work?' Product bottle on right with green checkmark. Dark, high-contrast background for scroll-stop power.",
-    elements: ["Problem headline", "Solution product", "High contrast design", "Checkmark CTA", "Urgency color"],
-    colors: ["#EF4444", "#22C55E", "#0F172A"],
-    angle: "Pain Point",
+    title: "Ad Composition",
+    desc: "Styled flat lay with negative space ready for headline overlay",
+    gradient: "from-emerald-500/20 to-teal-500/20",
+    accent: "#10B981",
   },
 ];
 
+interface GeneratedImage {
+  angle: string;
+  b64: string | null;
+}
+
 export default function PictureAdsPage() {
+  const [productName, setProductName] = useState("");
+  const [productDescription, setProductDescription] = useState("");
+  const [brandStyle, setBrandStyle] = useState("clean");
+  const [targetAudience, setTargetAudience] = useState("");
+  const [imageFormat, setImageFormat] = useState("square");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [images, setImages] = useState<GeneratedImage[]>([]);
+
+  async function handleGenerate() {
+    if (!productName.trim()) return;
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/generate-product-photo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productName: productName.trim(),
+          productDescription: productDescription.trim(),
+          brandStyle,
+          targetAudience: targetAudience.trim(),
+          imageType: imageFormat,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Generation failed");
+
+      setImages(data.images as GeneratedImage[]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Generation failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function downloadImage(b64: string, angle: string) {
+    const link = document.createElement("a");
+    link.href = `data:image/png;base64,${b64}`;
+    link.download = `${productName.replace(/\s+/g, "-").toLowerCase()}-${angle.replace(/\s+/g, "-").toLowerCase()}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  const hasImages = images.length > 0;
+
   return (
     <div className="p-4 sm:p-6 max-w-6xl mx-auto">
-      <div className="mb-8">
+      {/* Header */}
+      <div className="mb-6">
         <p className="text-muted-foreground text-sm mb-1">Creative Suite</p>
-        <h1 className="text-2xl font-bold tracking-tight">Picture Ad Concepts</h1>
-        <p className="text-muted-foreground text-sm mt-1">Static ad briefs ready for your designer or Canva</p>
+        <h1 className="text-2xl font-bold tracking-tight">Product Photo Generator</h1>
+        <p className="text-muted-foreground text-sm mt-1">
+          AI-generated ecommerce photography for Shopify, Meta ads, and TikTok
+        </p>
       </div>
 
-      <div className="grid sm:grid-cols-2 gap-5">
-        {pictureAds.map((ad, i) => (
-          <motion.div
-            key={i}
-            className="bg-card border border-border rounded-2xl overflow-hidden hover:border-primary/20 hover:shadow-lg hover:shadow-primary/5 transition-all hover:-translate-y-0.5 group"
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.08, duration: 0.4 }}
-          >
-            {/* Mock preview area */}
-            <div
-              className="h-44 relative overflow-hidden flex items-center justify-center"
-              style={{ background: `linear-gradient(135deg, ${ad.colors[0]}33, ${ad.colors[1]}33)` }}
+      {/* Form */}
+      <div className="bg-card border border-border rounded-2xl p-5 sm:p-6 mb-6">
+        <div className="grid sm:grid-cols-2 gap-4 mb-4">
+          <div>
+            <label className="block text-sm font-medium mb-1.5">
+              Product Name <span className="text-red-400">*</span>
+            </label>
+            <input
+              value={productName}
+              onChange={(e) => setProductName(e.target.value)}
+              placeholder="e.g. Vitamin C Glow Serum"
+              className="w-full h-10 px-3.5 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-all"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1.5">Target Audience</label>
+            <input
+              value={targetAudience}
+              onChange={(e) => setTargetAudience(e.target.value)}
+              placeholder="e.g. Women 25–40 with sensitive skin"
+              className="w-full h-10 px-3.5 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-all"
+            />
+          </div>
+        </div>
+
+        <div className="mb-4">
+          <label className="block text-sm font-medium mb-1.5">
+            Product Description
+            <span className="text-muted-foreground font-normal ml-1">(helps accuracy)</span>
+          </label>
+          <textarea
+            value={productDescription}
+            onChange={(e) => setProductDescription(e.target.value)}
+            placeholder="e.g. Glass dropper bottle, orange-tinted serum, minimalist white label, gold metallic cap"
+            rows={2}
+            className="w-full px-3.5 py-2.5 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-all resize-none"
+          />
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-4 mb-5">
+          <div>
+            <label className="block text-sm font-medium mb-1.5">Brand Style</label>
+            <select
+              value={brandStyle}
+              onChange={(e) => setBrandStyle(e.target.value)}
+              className="w-full h-10 px-3.5 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-all"
             >
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="text-center">
-                  <Image className="h-10 w-10 mx-auto mb-2 opacity-20" />
-                  <p className="text-xs text-muted-foreground font-medium">{ad.format}</p>
+              {BRAND_STYLES.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1.5">Image Format</label>
+            <select
+              value={imageFormat}
+              onChange={(e) => setImageFormat(e.target.value)}
+              className="w-full h-10 px-3.5 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-all"
+            >
+              {IMAGE_FORMATS.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label} — {f.desc}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <button
+          onClick={handleGenerate}
+          disabled={loading || !productName.trim()}
+          className="w-full gradient-bg text-white font-semibold py-3 rounded-xl hover:opacity-90 transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+        >
+          {loading ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Generating 4 photos — this takes ~20 seconds…
+            </>
+          ) : hasImages ? (
+            <>
+              <RefreshCw className="h-4 w-4" />
+              Regenerate Photos
+            </>
+          ) : (
+            <>
+              <Camera className="h-4 w-4" />
+              Generate Product Photos
+            </>
+          )}
+        </button>
+
+        {error && (
+          <div className="mt-3 flex items-start gap-2 text-sm text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-2.5 rounded-xl">
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Results */}
+      <AnimatePresence mode="wait">
+        {loading ? (
+          <motion.div
+            key="skeleton"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="grid sm:grid-cols-2 gap-5"
+          >
+            {CONCEPT_PLACEHOLDERS.map((_, i) => (
+              <div
+                key={i}
+                className="bg-card border border-border rounded-2xl overflow-hidden"
+              >
+                <div className="h-56 bg-secondary animate-pulse" />
+                <div className="p-4 space-y-2">
+                  <div className="h-4 w-24 bg-secondary animate-pulse rounded-full" />
+                  <div className="h-3 w-40 bg-secondary animate-pulse rounded-full" />
                 </div>
               </div>
-              <div className="absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-card to-transparent" />
-              <div className="absolute top-3 left-3">
-                <span className="text-xs font-bold px-2.5 py-1 rounded-full text-white" style={{ backgroundColor: ad.colors[0] }}>
-                  {ad.angle}
-                </span>
-              </div>
+            ))}
+          </motion.div>
+        ) : hasImages ? (
+          <motion.div
+            key="generated"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="grid sm:grid-cols-2 gap-5"
+          >
+            {images.map((img, i) => (
+              <motion.div
+                key={i}
+                className="bg-card border border-border rounded-2xl overflow-hidden group hover:border-primary/20 hover:shadow-lg hover:shadow-primary/5 transition-all"
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.08, duration: 0.4 }}
+              >
+                {img.b64 ? (
+                  <div className="relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={`data:image/png;base64,${img.b64}`}
+                      alt={`${productName} – ${img.angle}`}
+                      className="w-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
+                    <div className="absolute top-3 left-3">
+                      <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-black/60 text-white backdrop-blur-sm">
+                        {img.angle}
+                      </span>
+                    </div>
+                    <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => downloadImage(img.b64!, img.angle)}
+                        className="p-2 rounded-lg bg-black/60 text-white backdrop-blur-sm hover:bg-black/80 transition-colors"
+                        title="Download"
+                      >
+                        <Download className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="h-56 bg-secondary flex items-center justify-center">
+                    <p className="text-sm text-muted-foreground">Image unavailable</p>
+                  </div>
+                )}
+
+                <div className="px-4 py-3 flex items-center justify-between">
+                  <p className="text-sm font-semibold">{img.angle}</p>
+                  {img.b64 && (
+                    <button
+                      onClick={() => downloadImage(img.b64!, img.angle)}
+                      className="flex items-center gap-1.5 text-xs text-primary font-medium hover:underline"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      Download PNG
+                    </button>
+                  )}
+                </div>
+              </motion.div>
+            ))}
+          </motion.div>
+        ) : (
+          <motion.div
+            key="placeholders"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <div className="flex items-center gap-2 mb-4">
+              <Sparkles className="h-4 w-4 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground font-medium">
+                4 photo styles will be generated — fill in the form above and click Generate
+              </p>
             </div>
-
-            <div className="p-5">
-              <div className="flex items-start justify-between mb-3">
-                <div>
-                  <h3 className="font-bold text-sm">{ad.title}</h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">{ad.platform}</p>
-                </div>
-                <div className="flex gap-1.5">
-                  <button className="p-1.5 rounded-lg hover:bg-secondary transition-colors text-muted-foreground">
-                    <Copy className="h-3.5 w-3.5" />
-                  </button>
-                  <button className="p-1.5 rounded-lg hover:bg-secondary transition-colors text-muted-foreground">
-                    <Download className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-
-              <p className="text-xs text-muted-foreground leading-relaxed mb-4">{ad.concept}</p>
-
-              <div className="flex flex-wrap gap-1.5 mb-3">
-                {ad.elements.map((el) => (
-                  <span key={el} className="text-xs bg-secondary px-2 py-0.5 rounded-full">{el}</span>
-                ))}
-              </div>
-
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-muted-foreground">Colors:</span>
-                {ad.colors.map((c) => (
-                  <div key={c} className="w-4 h-4 rounded-full border border-border" style={{ backgroundColor: c }} />
-                ))}
-              </div>
+            <div className="grid sm:grid-cols-2 gap-5">
+              {CONCEPT_PLACEHOLDERS.map((card, i) => (
+                <motion.div
+                  key={i}
+                  className="bg-card border border-border rounded-2xl overflow-hidden"
+                  initial={{ opacity: 0, y: 16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.08, duration: 0.4 }}
+                >
+                  <div
+                    className={`h-44 bg-gradient-to-br ${card.gradient} flex items-center justify-center relative`}
+                  >
+                    <Camera className="h-10 w-10 opacity-20" style={{ color: card.accent }} />
+                    <div className="absolute top-3 left-3">
+                      <span
+                        className="text-xs font-bold px-2.5 py-1 rounded-full text-white"
+                        style={{ backgroundColor: card.accent }}
+                      >
+                        {card.title}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="p-4">
+                    <p className="text-sm font-semibold mb-1">{card.title}</p>
+                    <p className="text-xs text-muted-foreground">{card.desc}</p>
+                  </div>
+                </motion.div>
+              ))}
             </div>
           </motion.div>
-        ))}
-      </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
