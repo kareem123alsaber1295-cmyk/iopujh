@@ -12,7 +12,14 @@ export type AdType =
   | "Testimonial"
   | "Founder Ad"
   | "Educational Ad";
-export type VideoLength = "8 sec" | "15 sec";
+export type VideoLength = "8 sec" | "15 sec" | "30 sec";
+export type ScriptStyle =
+  | "UGC"
+  | "Testimonial"
+  | "Product Demo"
+  | "Problem/Solution"
+  | "Educational"
+  | "Founder-Style";
 export type HookType =
   | "Curiosity"
   | "Pain-Point"
@@ -29,6 +36,8 @@ export interface AdGeneratorInput {
   mainProblem: string;
   uniqueSellingPoint: string;
   offer: string;
+  adScript: string;
+  scriptStyle: ScriptStyle;
   platforms: Platform[];
   goal: Goal;
   adType: AdType;

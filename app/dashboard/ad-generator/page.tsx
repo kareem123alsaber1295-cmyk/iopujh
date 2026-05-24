@@ -14,13 +14,15 @@ import {
   type Goal,
   type AdType,
   type VideoLength,
+  type ScriptStyle,
   type HookType,
 } from "@/lib/generateAds";
 
 const PLATFORMS: Platform[] = ["Meta Feed", "TikTok", "Instagram Stories", "YouTube Shorts"];
 const GOALS: Goal[] = ["Conversions", "Leads", "Awareness", "Retargeting"];
 const AD_TYPES: AdType[] = ["UGC Video", "Image Ad", "Problem/Solution", "Testimonial", "Founder Ad", "Educational Ad"];
-const VIDEO_LENGTHS: VideoLength[] = ["8 sec", "15 sec"];
+const SCRIPT_STYLES: ScriptStyle[] = ["UGC", "Testimonial", "Product Demo", "Problem/Solution", "Educational", "Founder-Style"];
+const VIDEO_LENGTHS: VideoLength[] = ["8 sec", "15 sec", "30 sec"];
 
 const LOADING_STAGES = [
   { label: "Scanning product", icon: Search },
@@ -62,6 +64,8 @@ export default function AdGeneratorPage() {
     mainProblem: "",
     uniqueSellingPoint: "",
     offer: "",
+    adScript: "",
+    scriptStyle: "UGC",
     platforms: ["Meta Feed", "TikTok"],
     goal: "Conversions",
     adType: "UGC Video",
@@ -301,6 +305,39 @@ export default function AdGeneratorPage() {
               />
             </Field>
 
+            <Field label="Ad Script">
+              <textarea
+                value={form.adScript}
+                onChange={(e) => update("adScript", e.target.value)}
+                placeholder="Paste your script here..."
+                rows={5}
+                className="form-input"
+              />
+              <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
+                This script will be used for UGC videos and Seedance prompts.
+              </p>
+            </Field>
+
+            <Field label="Script Style">
+              <select
+                value={form.scriptStyle}
+                onChange={(e) => update("scriptStyle", e.target.value as ScriptStyle)}
+                className="form-input"
+              >
+                {SCRIPT_STYLES.map((s) => <option key={s}>{s}</option>)}
+              </select>
+            </Field>
+
+            <Field label="Video Length">
+              <select
+                value={form.videoLength}
+                onChange={(e) => update("videoLength", e.target.value as VideoLength)}
+                className="form-input"
+              >
+                {VIDEO_LENGTHS.map((v) => <option key={v}>{v}</option>)}
+              </select>
+            </Field>
+
             <Field label="Platforms" required>
               <div className="grid grid-cols-2 gap-2">
                 {PLATFORMS.map((p) => {
@@ -348,24 +385,6 @@ export default function AdGeneratorPage() {
               >
                 {AD_TYPES.map((t) => <option key={t}>{t}</option>)}
               </select>
-            </Field>
-
-            <Field label="Video length">
-              <div className="grid grid-cols-3 gap-2">
-                {VIDEO_LENGTHS.map((v) => (
-                  <button
-                    key={v}
-                    onClick={() => update("videoLength", v)}
-                    className={`text-xs font-medium px-3 py-2 rounded-lg border transition-all ${
-                      form.videoLength === v
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border bg-background text-muted-foreground hover:border-primary/30 hover:text-foreground"
-                    }`}
-                  >
-                    {v}
-                  </button>
-                ))}
-              </div>
             </Field>
 
             {errors.length > 0 && (
