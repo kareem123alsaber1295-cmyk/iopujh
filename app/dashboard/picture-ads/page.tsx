@@ -35,7 +35,7 @@ const ANGLE_DESCS = [
 
 interface ImageState {
   angle: string;
-  b64: string | null;
+  objectUrl: string | null;
   loading: boolean;
   error: string | null;
 }
@@ -61,9 +61,17 @@ export default function PictureAdsPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Generation failed");
+
+      // Convert base64 to blob URL so browser renders it natively
+      const binary = atob(data.b64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: "image/png" });
+      const objectUrl = URL.createObjectURL(blob);
+
       setImages((prev) =>
         prev.map((img) =>
-          img.angle === angle ? { ...img, b64: data.b64, loading: false, error: null } : img
+          img.angle === angle ? { ...img, objectUrl, loading: false, error: null } : img
         )
       );
     } catch (err) {
@@ -83,7 +91,7 @@ export default function PictureAdsPage() {
 
     const initial: ImageState[] = ANGLES.map((angle) => ({
       angle,
-      b64: null,
+      objectUrl: null,
       loading: true,
       error: null,
     }));
@@ -101,21 +109,13 @@ export default function PictureAdsPage() {
     setGenerating(false);
   }
 
-  async function downloadImage(b64: string, angle: string) {
-    try {
-      const res = await fetch(`data:image/png;base64,${b64}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `${productName.replace(/\s+/g, "-").toLowerCase()}-${angle.replace(/\s+/g, "-").toLowerCase()}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    } catch {
-      // fallback: nothing to open without a URL
-    }
+  function downloadImage(objectUrl: string, angle: string) {
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = `${productName.replace(/\s+/g, "-").toLowerCase()}-${angle.replace(/\s+/g, "-").toLowerCase()}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   }
 
   return (
@@ -254,12 +254,12 @@ export default function PictureAdsPage() {
                       <p className="text-sm font-semibold">{img.angle}</p>
                     </div>
                   </>
-                ) : img.b64 ? (
+                ) : img.objectUrl ? (
                   <>
                     <div className="relative">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={`data:image/png;base64,${img.b64}`}
+                        src={img.objectUrl}
                         alt={`${productName} – ${img.angle}`}
                         className="w-full object-cover"
                       />
@@ -271,7 +271,7 @@ export default function PictureAdsPage() {
                       </div>
                       <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
-                          onClick={() => downloadImage(img.b64!, img.angle)}
+                          onClick={() => downloadImage(img.objectUrl!, img.angle)}
                           className="p-2 rounded-lg bg-black/60 text-white backdrop-blur-sm hover:bg-black/80 transition-colors"
                           title="Download"
                         >
@@ -282,7 +282,7 @@ export default function PictureAdsPage() {
                     <div className="px-4 py-3 flex items-center justify-between">
                       <p className="text-sm font-semibold">{img.angle}</p>
                       <button
-                        onClick={() => downloadImage(img.b64!, img.angle)}
+                        onClick={() => downloadImage(img.objectUrl!, img.angle)}
                         className="flex items-center gap-1.5 text-xs text-primary font-medium hover:underline"
                       >
                         <Download className="h-3.5 w-3.5" />
