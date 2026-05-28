@@ -6,7 +6,7 @@ import {
   Sparkles, Copy, Check, Download, ArrowLeft, Palette,
   Megaphone, FileText, Video, Image, Users, ChevronRight,
   Star, Target, Zap, RefreshCw, Camera, Aperture, SunMedium,
-  Layers, Share2, Loader2
+  Layers, Share2, Loader2, ArrowLeftRight
 } from "lucide-react";
 
 const tabs = [
@@ -25,6 +25,7 @@ interface ProductData {
   audience: string;
   style: string;
   outputs: string[];
+  referenceImageUrl?: string | null;
 }
 
 function useProductData(): ProductData {
@@ -102,6 +103,7 @@ export default function ResultsPage() {
               targetAudience: product.audience,
               imageType: PHOTO_FORMATS[idx],
               angle,
+              referenceImageUrl: product.referenceImageUrl || null,
             }),
           });
           const data = await res.json();
@@ -835,6 +837,42 @@ const photoShots = [
   },
 ];
 
+function BeforeAfterSlider({ before, after, alt }: { before: string; after: string; alt: string }) {
+  const [pos, setPos] = useState(50);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  function onPointerMove(e: React.PointerEvent) {
+    if (!(e.buttons & 1)) return;
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setPos(Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100)));
+  }
+
+  return (
+    <div ref={containerRef} className="relative select-none cursor-ew-resize overflow-hidden" onPointerMove={onPointerMove}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={`data:image/jpeg;base64,${after}`} alt={alt} className="w-full block" draggable={false} />
+      <div className="absolute inset-0 overflow-hidden pointer-events-none" style={{ width: `${pos}%` }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={before} alt="Original" className="absolute inset-0 block" style={{ width: `${10000 / pos}%`, maxWidth: "none" }} draggable={false} />
+      </div>
+      <div className="absolute top-0 bottom-0 w-px bg-white/90 shadow-[0_0_8px_rgba(0,0,0,0.5)] pointer-events-none" style={{ left: `${pos}%` }}>
+        <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-8 h-8 bg-white rounded-full shadow-xl flex items-center justify-center">
+          <ArrowLeftRight className="h-3.5 w-3.5 text-black" />
+        </div>
+      </div>
+      <div className="absolute bottom-2 left-2 pointer-events-none">
+        <span className="text-[9px] font-bold bg-black/70 text-white px-1.5 py-0.5 rounded-full">ORIGINAL</span>
+      </div>
+      <div className="absolute bottom-2 right-2 pointer-events-none">
+        <span className="text-[9px] font-bold gradient-bg text-white px-1.5 py-0.5 rounded-full">AI GENERATED</span>
+      </div>
+      <input type="range" min="0" max="100" value={pos} onChange={(e) => setPos(Number(e.target.value))}
+        className="absolute inset-0 opacity-0 w-full h-full" style={{ cursor: "ew-resize" }} />
+    </div>
+  );
+}
+
 function ProductPhotosTab({
   product,
   images,
@@ -848,8 +886,8 @@ function ProductPhotosTab({
 }) {
   function downloadImage(b64: string, label: string) {
     const a = document.createElement("a");
-    a.href = `data:image/png;base64,${b64}`;
-    a.download = `${product.name.replace(/\s+/g, "-").toLowerCase()}-${label.replace(/\s+/g, "-").toLowerCase()}.png`;
+    a.href = `data:image/jpeg;base64,${b64}`;
+    a.download = `${product.name.replace(/\s+/g, "-").toLowerCase()}-${label.replace(/\s+/g, "-").toLowerCase()}.jpg`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -875,8 +913,12 @@ function ProductPhotosTab({
           ) : (
             <p className="text-xs text-muted-foreground leading-relaxed">
               {hasAny
-                ? "4 photorealistic images generated. Download as PNG."
-                : "4 photorealistic images generated based on your product, brand style, and target audience."}
+                ? product.referenceImageUrl
+                  ? "Generated with FLUX Kontext — drag the slider to compare original vs AI."
+                  : "4 photorealistic images generated. Download as JPG."
+                : product.referenceImageUrl
+                  ? "Using your reference photo — FLUX Kontext will preserve structure while replacing branding."
+                  : "4 photorealistic images generated based on your product, brand style, and target audience."}
             </p>
           )}
         </div>
@@ -902,26 +944,36 @@ function ProductPhotosTab({
             ) : images[i] ? (
               <>
                 <div className="relative overflow-hidden">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={`data:image/png;base64,${images[i]}`}
-                    alt={`${product.name} – ${shot.type}`}
-                    className="w-full object-cover"
-                  />
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
-                  <div className="absolute top-3 left-3">
-                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-black/60 text-white backdrop-blur-sm">
-                      {shot.type}
-                    </span>
-                  </div>
-                  <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      onClick={() => downloadImage(images[i]!, shot.type)}
-                      className="p-2 rounded-lg bg-black/60 text-white backdrop-blur-sm hover:bg-black/80 transition-colors"
-                    >
-                      <Download className="h-4 w-4" />
-                    </button>
-                  </div>
+                  {product.referenceImageUrl ? (
+                    <BeforeAfterSlider
+                      before={product.referenceImageUrl}
+                      after={images[i]!}
+                      alt={`${product.name} – ${shot.type}`}
+                    />
+                  ) : (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={`data:image/jpeg;base64,${images[i]}`}
+                        alt={`${product.name} – ${shot.type}`}
+                        className="w-full object-cover"
+                      />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
+                      <div className="absolute top-3 left-3">
+                        <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-black/60 text-white backdrop-blur-sm">
+                          {shot.type}
+                        </span>
+                      </div>
+                      <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => downloadImage(images[i]!, shot.type)}
+                          className="p-2 rounded-lg bg-black/60 text-white backdrop-blur-sm hover:bg-black/80 transition-colors"
+                        >
+                          <Download className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
                 <div className="px-4 py-3 flex items-center justify-between">
                   <div>

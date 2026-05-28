@@ -36,6 +36,8 @@ export default function BrandGeneratorPage() {
   const router = useRouter();
   const [dragActive, setDragActive] = useState(false);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null);
+  const [uploadingRef, setUploadingRef] = useState(false);
   const [selectedStyle, setSelectedStyle] = useState("viral-tiktok");
   const [selectedOutputs, setSelectedOutputs] = useState<Set<string>>(defaultSelected);
   const [generating, setGenerating] = useState(false);
@@ -46,18 +48,38 @@ export default function BrandGeneratorPage() {
   const [productDesc, setProductDesc] = useState("");
   const [targetAudience, setTargetAudience] = useState("");
 
+  const handleFile = useCallback(async (file: File) => {
+    setUploadedImage(URL.createObjectURL(file));
+    setReferenceImageUrl(null);
+    setUploadingRef(true);
+    try {
+      const resized = await resizeImage(file, 1024);
+      const b64 = resized.split(",")[1];
+      const mimeType = resized.split(";")[0].split(":")[1];
+      const res = await fetch("/api/upload-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base64: b64, mimeType }),
+      });
+      const data = await res.json();
+      if (res.ok) setReferenceImageUrl(data.url);
+    } catch (err) {
+      console.error("Reference image upload failed:", err);
+    } finally {
+      setUploadingRef(false);
+    }
+  }, []);
+
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragActive(false);
     const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith("image/")) {
-      setUploadedImage(URL.createObjectURL(file));
-    }
-  }, []);
+    if (file && file.type.startsWith("image/")) handleFile(file);
+  }, [handleFile]);
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) setUploadedImage(URL.createObjectURL(file));
+    if (file) handleFile(file);
   };
 
   function toggleOutput(id: string) {
@@ -122,6 +144,7 @@ export default function BrandGeneratorPage() {
       audience: targetAudience,
       style: selectedStyle,
       outputs: Array.from(selectedOutputs),
+      referenceImageUrl: referenceImageUrl || null,
     }));
     router.push("/dashboard/results");
   }
@@ -157,11 +180,22 @@ export default function BrandGeneratorPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); setUploadedImage(null); }}
+                    onClick={(e) => { e.stopPropagation(); setUploadedImage(null); setReferenceImageUrl(null); }}
                     className="absolute top-6 right-6 w-7 h-7 bg-background border border-border rounded-full flex items-center justify-center hover:bg-secondary transition-colors shadow-sm"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
+                  <div className="absolute bottom-6 left-6">
+                    {uploadingRef ? (
+                      <span className="text-[10px] font-semibold bg-black/70 text-white px-2 py-1 rounded-full flex items-center gap-1 backdrop-blur-sm">
+                        <Upload className="h-2.5 w-2.5 animate-pulse" /> Uploading…
+                      </span>
+                    ) : referenceImageUrl ? (
+                      <span className="text-[10px] font-semibold bg-emerald-500 text-white px-2 py-1 rounded-full">
+                        ✓ Ready for AI photos
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center py-12 px-6 text-center pointer-events-none">
@@ -376,4 +410,23 @@ export default function BrandGeneratorPage() {
       </AnimatePresence>
     </div>
   );
+}
+
+function resizeImage(file: File, maxPx: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.92));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
 }
