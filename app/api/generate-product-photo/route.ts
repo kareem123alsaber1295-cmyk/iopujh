@@ -45,7 +45,6 @@ const PHOTO_SCENES: Record<string, string[]> = {
   ],
 };
 
-// Map legacy angle → (photoType, variation) for results page backward compat
 const ANGLE_TO_TYPE: Record<string, { type: string; variation: number }> = {
   "Hero Shot":         { type: "shopify",   variation: 0 },
   "Lifestyle Context": { type: "bathroom",  variation: 0 },
@@ -53,7 +52,6 @@ const ANGLE_TO_TYPE: Record<string, { type: string; variation: number }> = {
   "Detail Close-up":   { type: "luxury",    variation: 0 },
 };
 
-// Map generationMode/brandStyle for legacy calls
 const MODE_TO_TYPE: Record<string, string> = {
   studio: "shopify", luxury: "luxury", amazon: "amazon",
   "meta-ad": "meta-ad", tiktok: "tiktok", wellness: "bathroom", minimal: "shopify",
@@ -61,7 +59,6 @@ const MODE_TO_TYPE: Record<string, string> = {
   "viral-tiktok": "tiktok", feminine: "bathroom", premium: "shopify",
 };
 
-// Fallback FLUX text-to-image scenes (no product reference)
 const STYLE_TO_PROMPT: Record<string, string> = {
   shopify: "Clean white studio background, professional ecommerce product photography, Shopify hero image quality, soft box lighting, sharp focus",
   amazon: "Pure white background, Amazon listing photography, neutral studio lighting, commercial product photography",
@@ -74,15 +71,23 @@ const STYLE_TO_PROMPT: Record<string, string> = {
 const STRICT_REQUIREMENT =
   "Professional ecommerce product photography. Preserve exact product shape, bottle structure, label placement, and proportions. Photorealistic, commercial studio quality.";
 
+function isForbiddenError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+  return msg.includes("403") || msg.includes("forbidden") || msg.includes("401") || msg.includes("unauthorized");
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const falKeyPresent = !!process.env.FAL_KEY;
-    console.log("[generate-product-photo] Request received, FAL_KEY present:", falKeyPresent);
+    const FAL_KEY = process.env.FAL_KEY;
+    const keyPresent = !!FAL_KEY;
+    console.log("[generate-product-photo] FAL_KEY present:", keyPresent, "| prefix:", FAL_KEY ? FAL_KEY.slice(0, 6) + "..." : "none");
 
-    if (!falKeyPresent) {
-      console.error("[generate-product-photo] FAL_KEY env var is not set");
+    if (!FAL_KEY) {
       return NextResponse.json({ error: "FAL_KEY not configured — add it to Vercel environment variables" }, { status: 500 });
     }
+
+    // Explicit auth config — required for Vercel serverless; auto-read is not reliable
+    fal.config({ credentials: FAL_KEY });
 
     const {
       productName,
@@ -102,7 +107,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "productName is required" }, { status: 400 });
     }
 
-    // Resolve photo type
     const photoType =
       rawPhotoType ||
       (angle && ANGLE_TO_TYPE[angle]?.type) ||
@@ -116,7 +120,7 @@ export async function POST(req: NextRequest) {
       photoType,
       variationIdx,
       hasReferenceImage: !!referenceImageUrl,
-      angle,
+      angle: angle || "(none)",
     });
 
     const brandPart = brandName?.trim() ? ` for ${brandName.trim()} brand` : "";
@@ -128,11 +132,10 @@ export async function POST(req: NextRequest) {
     if (referenceImageUrl) {
       // ── BRIA Product Shot (image-to-image) ──────────────────────────────────
       const scenes = PHOTO_SCENES[photoType] ?? PHOTO_SCENES.shopify;
-      const baseScene = scenes[variationIdx];
       const sceneDescription =
-        `${baseScene}${brandPart}${colorPart}.${descPart} ${STRICT_REQUIREMENT}`;
+        `${scenes[variationIdx]}${brandPart}${colorPart}.${descPart} ${STRICT_REQUIREMENT}`;
 
-      console.log("[generate-product-photo] Calling BRIA product-shot", { referenceImageUrl, sceneDescription });
+      console.log("[generate-product-photo] Calling fal-ai/bria/product-shot");
 
       const { data } = await fal.run("fal-ai/bria/product-shot", {
         input: {
@@ -148,9 +151,9 @@ export async function POST(req: NextRequest) {
       });
 
       imageUrl = data.images?.[0]?.url;
-      console.log("[generate-product-photo] BRIA returned imageUrl:", imageUrl);
+      console.log("[generate-product-photo] BRIA imageUrl received:", !!imageUrl);
     } else {
-      // ── FLUX text-to-image fallback (no reference) ──────────────────────────
+      // ── FLUX text-to-image fallback (no reference image) ────────────────────
       const sceneBase = STYLE_TO_PROMPT[photoType] ?? STYLE_TO_PROMPT.shopify;
       const prompt =
         `Realistic ecommerce product photograph for ${productName.trim()}. ` +
@@ -162,6 +165,8 @@ export async function POST(req: NextRequest) {
       const AR_MAP: Record<string, "1:1" | "3:4" | "9:16" | "16:9"> = { square: "1:1", portrait: "3:4", story: "9:16", landscape: "16:9" };
       const aspectRatio = AR_MAP[imageType as string] ?? "1:1";
 
+      console.log("[generate-product-photo] Calling fal-ai/flux-pro/kontext/text-to-image");
+
       const { data } = await fal.run("fal-ai/flux-pro/kontext/text-to-image", {
         input: {
           prompt,
@@ -172,11 +177,10 @@ export async function POST(req: NextRequest) {
       });
 
       imageUrl = data.images?.[0]?.url;
-      console.log("[generate-product-photo] FLUX returned imageUrl:", imageUrl);
+      console.log("[generate-product-photo] FLUX imageUrl received:", !!imageUrl);
     }
 
     if (!imageUrl) throw new Error("No image URL returned from model — images array may be empty");
-    console.log("[generate-product-photo] Fetching image from URL:", imageUrl);
 
     const imgRes = await fetch(imageUrl);
     const buffer = await imgRes.arrayBuffer();
@@ -185,7 +189,15 @@ export async function POST(req: NextRequest) {
     console.log("[generate-product-photo] Success, b64 length:", b64.length);
     return NextResponse.json({ angle: angle || `variation-${variationIdx}`, b64 });
   } catch (err) {
-    console.error("generate-product-photo error:", err);
+    console.error("[generate-product-photo] Error:", err instanceof Error ? err.message : err);
+
+    if (isForbiddenError(err)) {
+      return NextResponse.json(
+        { error: "Fal API authorization failed (403/401). Check FAL_KEY value, account billing, and model access at fal.ai/dashboard." },
+        { status: 403 }
+      );
+    }
+
     const message = err instanceof Error ? err.message : "Generation failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
