@@ -169,19 +169,22 @@ export async function POST(req: NextRequest) {
         "Ultra-realistic, sharp focus, professional studio quality, no distorted geometry, no warped labels, no floating elements, commercial photography." +
         " Bright, well-lit, product clearly visible.";
 
-      const AR_MAP: Record<string, "1:1" | "3:4" | "9:16" | "16:9"> = {
-        square: "1:1", portrait: "3:4", story: "9:16", landscape: "16:9",
+      // Map imageType → fal flux/schnell image_size values
+      const SIZE_MAP: Record<string, "square_hd" | "portrait_4_3" | "portrait_16_9" | "landscape_16_9"> = {
+        square: "square_hd", portrait: "portrait_4_3", story: "portrait_16_9", landscape: "landscape_16_9",
       };
-      const aspectRatio = AR_MAP[imageType as string] ?? "1:1";
+      const imageSize = SIZE_MAP[imageType as string] ?? "square_hd";
 
-      console.log("[generate-product-photo] Calling FLUX text-to-image");
+      console.log("[generate-product-photo] Calling fal-ai/flux/schnell, imageSize:", imageSize);
 
-      const { data } = await fal.run("fal-ai/flux-pro/kontext/text-to-image", {
+      const { data } = await fal.run("fal-ai/flux/schnell", {
         input: {
           prompt,
-          guidance_scale: 3.5,
-          output_format: "jpeg",
-          aspect_ratio: aspectRatio,
+          image_size: imageSize,
+          num_inference_steps: 4,
+          num_images: 1,
+          enable_safety_checker: false,
+          sync_mode: false,
         },
       });
 
