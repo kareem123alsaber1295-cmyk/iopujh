@@ -1,8 +1,19 @@
 // Step 3: Video generation via fal.ai Seedance 2.0.
 //
-// Produces the base UGC-style video. Seedance is NOT relied on for perfect
-// speech sync — that's step 4's job. We do, however, control the look very
-// strictly through the prompt: realistic UGC, not commercial-looking.
+// Seedance renders take longer than a single Vercel function invocation
+// can wait for, so we split the call into two phases:
+//
+//   submitSeedance(...)  → fire off the job, return the request_id immediately
+//   checkSeedance(id)    → one-shot status check, returns the video URL when done
+//
+// The /api/generate-video route uses submit; /api/generate-video/status uses
+// check. The pipeline persists the request_id in Supabase between the two
+// calls so the polling endpoint can find an in-flight job after any number
+// of serverless cold starts.
+//
+// Look-and-feel rules ("UGC realism, no commercial polish") are baked into
+// every prompt. Lip sync is still step 4's job — we don't rely on Seedance
+// for perfect mouth-to-audio alignment.
 
 import type { VideoMode, VideoDuration } from "./videoPipeline";
 
@@ -54,37 +65,32 @@ const MOCK_PLACEHOLDERS = [
   "https://test-videos.co.uk/vids/sintel/mp4/h264/360/Sintel_360_10s_1MB.mp4",
 ];
 
-export async function generateVideo(input: VideoInput): Promise<GeneratedVideo> {
-  const apiKey = process.env.FAL_KEY;
+const SEEDANCE_SUBMIT_URL = "https://queue.fal.run/fal-ai/bytedance/seedance/v2/pro/image-to-video";
+const SEEDANCE_REQUEST_BASE = "https://queue.fal.run/fal-ai/bytedance/seedance/v2/pro/requests";
 
-  if (!apiKey) {
-    console.log("[video] FAL_KEY not set — using mock");
-    return mockVideo();
-  }
-
-  console.log(`[video] generating with fal.ai Seedance 2.0, mode=${input.mode}, duration=${input.duration}`);
-
-  try {
-    return await callSeedance(apiKey, input);
-  } catch (err) {
-    console.warn("[video] Seedance failed once, retrying:", err);
-    try {
-      return await callSeedance(apiKey, input);
-    } catch (err2) {
-      console.error("[video] Seedance failed twice, falling back to mock:", err2);
-      return mockVideo();
-    }
-  }
+// Returns true if FAL_KEY is set, i.e. we should actually submit to Seedance.
+export function isSeedanceEnabled(): boolean {
+  return !!process.env.FAL_KEY;
 }
 
-async function callSeedance(apiKey: string, input: VideoInput): Promise<GeneratedVideo> {
+export interface SeedanceSubmitResult {
+  requestId: string;
+  provider: "fal-seedance";
+}
+
+// Phase 1: submit a Seedance job and return its request_id immediately.
+// Caller is responsible for persisting the request_id so a later request
+// (after the function instance dies) can pick up the result.
+export async function submitSeedance(input: VideoInput): Promise<SeedanceSubmitResult> {
+  const apiKey = process.env.FAL_KEY;
+  if (!apiKey) throw new Error("FAL_KEY not set — submitSeedance called in mock mode");
+
   const prompt = buildPrompt(input);
   const durationSec = parseInt(input.duration.match(/(\d+)/)?.[1] ?? "15", 10);
 
-  // fal.ai's image-to-video endpoint for Seedance 2.0. Their job pattern is
-  // submit → poll → fetch result, so we submit and then poll status until
-  // completed or until we hit our budget (45s, leaving 15s for downstream).
-  const submitRes = await fetch("https://queue.fal.run/fal-ai/bytedance/seedance/v2/pro/image-to-video", {
+  console.log(`[video] submitting Seedance job, mode=${input.mode}, duration=${input.duration}`);
+
+  const res = await fetch(SEEDANCE_SUBMIT_URL, {
     method: "POST",
     headers: {
       "Authorization": `Key ${apiKey}`,
@@ -99,41 +105,75 @@ async function callSeedance(apiKey: string, input: VideoInput): Promise<Generate
     }),
   });
 
-  if (!submitRes.ok) {
-    throw new Error(`Seedance submit returned ${submitRes.status}: ${await submitRes.text()}`);
+  if (!res.ok) {
+    throw new Error(`Seedance submit returned ${res.status}: ${await res.text()}`);
   }
 
-  const { request_id } = await submitRes.json();
-  console.log(`[video] Seedance job submitted, request_id=${request_id}`);
-
-  // Poll for completion. fal.ai recommends 2-3s between polls.
-  const startedAt = Date.now();
-  const POLL_BUDGET_MS = 45_000;
-  while (Date.now() - startedAt < POLL_BUDGET_MS) {
-    await new Promise((r) => setTimeout(r, 2500));
-    const statusRes = await fetch(
-      `https://queue.fal.run/fal-ai/bytedance/seedance/v2/pro/requests/${request_id}/status`,
-      { headers: { "Authorization": `Key ${apiKey}` } },
-    );
-    if (!statusRes.ok) continue;
-    const status = await statusRes.json();
-    if (status.status === "COMPLETED") {
-      const resultRes = await fetch(
-        `https://queue.fal.run/fal-ai/bytedance/seedance/v2/pro/requests/${request_id}`,
-        { headers: { "Authorization": `Key ${apiKey}` } },
-      );
-      const result = await resultRes.json();
-      return {
-        videoUrl: result.video?.url ?? result.video_url,
-        provider: "fal-seedance",
-      };
-    }
-    if (status.status === "FAILED") {
-      throw new Error(`Seedance job failed: ${JSON.stringify(status)}`);
-    }
+  const data = await res.json();
+  const requestId = data.request_id;
+  if (!requestId) {
+    throw new Error(`Seedance submit returned no request_id: ${JSON.stringify(data)}`);
   }
 
-  throw new Error("Seedance job timed out waiting for completion");
+  console.log(`[video] Seedance job submitted, request_id=${requestId}`);
+  return { requestId, provider: "fal-seedance" };
+}
+
+export type SeedanceJobStatus =
+  | { status: "pending" }
+  | { status: "completed"; videoUrl: string }
+  | { status: "failed"; error: string };
+
+// Phase 2: one-shot status check for a previously-submitted Seedance job.
+// Maps fal.ai's vocabulary ("IN_QUEUE" / "IN_PROGRESS" / "COMPLETED" /
+// "FAILED") to our simpler {pending, completed, failed} so callers don't
+// need to know fal-specific states.
+export async function checkSeedance(requestId: string): Promise<SeedanceJobStatus> {
+  const apiKey = process.env.FAL_KEY;
+  if (!apiKey) throw new Error("FAL_KEY not set — checkSeedance called in mock mode");
+
+  const statusRes = await fetch(`${SEEDANCE_REQUEST_BASE}/${requestId}/status`, {
+    headers: { "Authorization": `Key ${apiKey}` },
+  });
+  if (!statusRes.ok) {
+    // Treat transient status errors as "still pending" so we just poll again
+    // next time rather than failing the whole job.
+    console.warn(`[video] Seedance status check returned ${statusRes.status}, treating as pending`);
+    return { status: "pending" };
+  }
+
+  const status = await statusRes.json();
+
+  if (status.status === "COMPLETED") {
+    const resultRes = await fetch(`${SEEDANCE_REQUEST_BASE}/${requestId}`, {
+      headers: { "Authorization": `Key ${apiKey}` },
+    });
+    if (!resultRes.ok) {
+      return { status: "failed", error: `Seedance result fetch returned ${resultRes.status}` };
+    }
+    const result = await resultRes.json();
+    const videoUrl = result.video?.url ?? result.video_url;
+    if (!videoUrl) {
+      return { status: "failed", error: `Seedance result had no video URL: ${JSON.stringify(result)}` };
+    }
+    return { status: "completed", videoUrl };
+  }
+
+  if (status.status === "FAILED") {
+    return { status: "failed", error: `Seedance job failed: ${JSON.stringify(status)}` };
+  }
+
+  // IN_QUEUE, IN_PROGRESS, or anything else we don't recognise — keep polling.
+  return { status: "pending" };
+}
+
+// Mock-mode entry point. Returns immediately with a placeholder video URL.
+// Used when FAL_KEY isn't set so the dashboard still works end-to-end.
+export function mockVideo(): GeneratedVideo {
+  return {
+    videoUrl: MOCK_PLACEHOLDERS[Math.floor(Math.random() * MOCK_PLACEHOLDERS.length)],
+    provider: "mock",
+  };
 }
 
 function buildPrompt(input: VideoInput): string {
@@ -148,11 +188,4 @@ function buildPrompt(input: VideoInput): string {
 
 function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n)}...` : s;
-}
-
-function mockVideo(): GeneratedVideo {
-  return {
-    videoUrl: MOCK_PLACEHOLDERS[Math.floor(Math.random() * MOCK_PLACEHOLDERS.length)],
-    provider: "mock",
-  };
 }

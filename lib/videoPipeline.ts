@@ -109,52 +109,111 @@ export const CAPTION_STYLES = [
   "None",
 ];
 
-// Drive the real server-side pipeline (/api/generate-video) while ticking
-// the UI stages on a timer so the progress UI still feels alive.
+// Drive the server-side pipeline and tick the UI through stages as work
+// progresses. Two server flows are supported:
 //
-// Stage timing here is approximate — actual server-side stage durations vary
-// wildly depending on which providers are mocked vs live. When the API
-// returns, we snap the UI to the final stage. V2 plan: replace timer-based
-// ticking with SSE / polling so stages reflect real server progress.
+//   Mock mode (no FAL_KEY on the server):
+//     POST /api/generate-video returns the full VideoGeneration record in
+//     one shot. We tick stages on a short timer for visual effect, then
+//     return.
+//
+//   Real mode (FAL_KEY set):
+//     POST /api/generate-video returns { id, status: "generating" } almost
+//     immediately. We then poll GET /api/generate-video/status?id=<id>
+//     every POLL_INTERVAL_MS until the record flips to "completed" or
+//     "failed". Stages are walked roughly: voice while the POST is in
+//     flight, video while polling, lipsync/captions/render/save once the
+//     final record arrives.
+//
+// If anything goes wrong we fall back to the local mock generator so the
+// gallery still gets a playable video instead of an error.
+
+// Frontend poll interval. fal.ai recommends not hammering their queue —
+// every 4-5s is plenty responsive for a 1-3 minute render.
+const POLL_INTERVAL_MS = 5_000;
+// Absolute ceiling on the polling loop, after which we give up and fall
+// back to mock. 10 minutes covers even the longest realistic Seedance Pro
+// renders with plenty of headroom.
+const POLL_TIMEOUT_MS = 10 * 60 * 1000;
+
+// Server response from POST /api/generate-video. Either a full record (mock
+// mode finished synchronously) or a job handle (real mode, must poll).
+type StartResponse = VideoGeneration | { id: string; status: "generating" };
+
+function isJobHandle(r: StartResponse): r is { id: string; status: "generating" } {
+  return (r as { status?: string }).status === "generating" && !("final_video_url" in r);
+}
+
 export async function runVideoPipeline(
   input: VideoGenerationInput,
   onStage: (stageIndex: number) => void,
 ): Promise<VideoGeneration> {
-  let cancelled = false;
+  // Step indices we snap the UI to at key transitions. Mapped against
+  // PIPELINE_STAGES: 0=preparing, 1=timing, 2=voice, 3=video, 4=lipsync,
+  // 5=captions, 6=render, 7=save.
+  const STAGE_PREPARING = 0;
+  const STAGE_VIDEO = 3;
+  const STAGE_SAVE = PIPELINE_STAGES.length - 1;
 
-  // Estimated ms per stage when running in pure-mock mode. Live providers
-  // (ElevenLabs / fal.ai / Sync Labs) extend total time well past these.
-  const STAGE_MS = [400, 600, 1200, 1600, 1200, 600, 400, 400];
+  onStage(STAGE_PREPARING);
 
-  const tick = (async () => {
-    for (let i = 0; i < PIPELINE_STAGES.length; i++) {
-      if (cancelled) return;
-      onStage(i);
-      await new Promise((r) => setTimeout(r, STAGE_MS[i] ?? 500));
-    }
-  })();
-
+  let startData: StartResponse;
   try {
     const res = await fetch("/api/generate-video", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
     });
-
-    cancelled = true;
-    await tick; // let any in-flight stage finish so the UI doesn't snap weirdly
-
     if (!res.ok) {
       console.warn(`[pipeline] /api/generate-video returned ${res.status}, using mock`);
       return mockGenerateVideo(input);
     }
-
-    const record = (await res.json()) as VideoGeneration;
-    onStage(PIPELINE_STAGES.length - 1);
-    return record;
+    startData = (await res.json()) as StartResponse;
   } catch (err) {
-    cancelled = true;
     console.warn("[pipeline] /api/generate-video threw, using mock:", err);
     return mockGenerateVideo(input);
   }
+
+  // Mock-mode synchronous path — server returned the finished record.
+  if (!isJobHandle(startData)) {
+    onStage(STAGE_SAVE);
+    return startData;
+  }
+
+  // Real-mode async path — server gave us a job id, now we poll.
+  onStage(STAGE_VIDEO);
+
+  const startedAt = Date.now();
+  const url = `/api/generate-video/status?id=${encodeURIComponent(startData.id)}`;
+
+  while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+
+    let body: StartResponse & { status?: string };
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        // Treat transient errors as "still working" and try again next tick.
+        continue;
+      }
+      body = await res.json();
+    } catch {
+      continue;
+    }
+
+    if (body.status === "generating") continue;
+
+    if (body.status === "completed" && "final_video_url" in body) {
+      onStage(STAGE_SAVE);
+      return body;
+    }
+
+    if (body.status === "failed") {
+      console.warn("[pipeline] server reported failed status, using mock");
+      return mockGenerateVideo(input);
+    }
+  }
+
+  console.warn(`[pipeline] poll timed out after ${POLL_TIMEOUT_MS}ms, using mock`);
+  return mockGenerateVideo(input);
 }

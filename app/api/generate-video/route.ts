@@ -1,34 +1,38 @@
-// Server-side video generation orchestrator.
+// Server-side video generation entry point.
 //
-// Runs the full mocked-or-real pipeline:
-//   1. Process script
-//   2. Generate voice  (ElevenLabs or mock)
-//   3. Generate video  (fal.ai Seedance or mock)
-//   4. Lip sync        (Sync Labs or mock; skipped for Silent B-Roll)
-//   5. Final render    (passthrough for V1)
-//   6. Storage upload  (Supabase or mock)
+// Runs the synchronous-friendly steps (script processing, voice) and then
+// branches:
 //
-// Each step's module decides whether to call its real API or fall back to a
-// mock based on the presence of its env var. That means the day this lands,
-// the route works in pure mock mode (matches the existing UX); adding env
-// vars one at a time progressively swaps real APIs in without code changes.
+//   Real mode (FAL_KEY set):
+//     Submit Seedance, persist a "generating" row with the request_id, and
+//     return immediately. The client then polls /api/generate-video/status
+//     until the video is ready. Total wall time here: ~1-3s.
+//
+//   Mock mode (FAL_KEY not set):
+//     Run the entire pipeline synchronously like before — mock video, mock
+//     lipsync, passthrough render, mock or real storage upload. Returns the
+//     full record in one shot so the dashboard keeps working without a
+//     fal.ai key.
 
 import { NextRequest, NextResponse } from "next/server";
 import { processScript, parseDurationLabel } from "@/lib/scriptProcessor";
 import { generateVoice } from "@/lib/generateVoice";
-import { generateVideo } from "@/lib/generateVideo";
+import { isSeedanceEnabled, submitSeedance, mockVideo } from "@/lib/generateVideo";
 import { lipSync } from "@/lib/lipSync";
 import { renderFinal } from "@/lib/renderFinal";
 import { uploadVideo } from "@/lib/storage";
 import { insertVideoGeneration } from "@/lib/database";
 import type { VideoGeneration, VideoGenerationInput } from "@/lib/videoPipeline";
 
-// Run the pipeline as a Node.js (not Edge) function so we can hold the audio
-// buffer in memory and use Node fetch semantics.
 export const runtime = "nodejs";
-// 60s is the Vercel Pro hard cap for serverless functions. Anything beyond
-// that needs background jobs (Inngest / Vercel Workflow / Trigger.dev).
+// Real mode finishes in 1-3s (just submit + voice). Mock mode finishes in
+// under a second. 60s is way more than enough headroom.
 export const maxDuration = 60;
+
+// Prefix we stash in raw_video_url while a Seedance job is in flight. Lets
+// the status endpoint recover the fal.ai request_id without adding a new
+// Supabase column.
+const SEEDANCE_PENDING_PREFIX = "seedance:";
 
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
@@ -51,19 +55,54 @@ export async function POST(req: NextRequest) {
     });
     console.log(`[pipeline] voice: provider=${voice.provider}, ${voice.durationSeconds}s`);
 
-    // ── Step 3: Video (Seedance) ──────────────────────────────────────
-    const video = await generateVideo({
-      productImage: input.productImage,
-      productName: input.productName,
-      script: processed.cleanedText,
-      mode: input.mode,
-      duration: input.duration,
-      characterStyle: input.characterStyle,
-      setting: input.setting,
-    });
+    const id = `vid_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    // ── Step 3: Video — branch on whether Seedance is configured ──────
+    if (isSeedanceEnabled()) {
+      // Real mode: submit and return immediately. Client polls /status.
+      const submit = await submitSeedance({
+        productImage: input.productImage,
+        productName: input.productName,
+        script: processed.cleanedText,
+        mode: input.mode,
+        duration: input.duration,
+        characterStyle: input.characterStyle,
+        setting: input.setting,
+      });
+
+      const pending: VideoGeneration = {
+        id,
+        // TODO: replace with auth.uid() once Supabase Auth is wired up.
+        user_id: "demo_user",
+        product_image_url: input.productImage,
+        product_name: input.productName || "Untitled product",
+        script: input.script,
+        voice_style: input.voiceStyle,
+        voice_url: voice.audioUrl,
+        // Stash the fal.ai request_id here so the polling endpoint can
+        // recover it without adding a new Supabase column.
+        raw_video_url: `${SEEDANCE_PENDING_PREFIX}${submit.requestId}`,
+        final_video_url: "",
+        captions: "",
+        mode: input.mode,
+        platform: input.platform,
+        duration: input.duration,
+        status: "generating",
+        created_at: new Date().toISOString(),
+      };
+
+      await insertVideoGeneration(pending);
+
+      const totalMs = Date.now() - startedAt;
+      console.log(`[pipeline] submitted in ${totalMs}ms, request_id=${submit.requestId}, id=${id}`);
+
+      return NextResponse.json({ id, status: "generating" });
+    }
+
+    // ── Mock-mode fallback: run the whole pipeline synchronously ──────
+    const video = mockVideo();
     console.log(`[pipeline] video: provider=${video.provider}`);
 
-    // ── Step 4: Lip sync ──────────────────────────────────────────────
     const synced = await lipSync({
       videoUrl: video.videoUrl,
       audioUrl: voice.audioUrl,
@@ -71,7 +110,6 @@ export async function POST(req: NextRequest) {
     });
     console.log(`[pipeline] lipsync: provider=${synced.provider}`);
 
-    // ── Step 5: Final render (passthrough in V1) ──────────────────────
     const rendered = await renderFinal({
       syncedVideoUrl: synced.syncedVideoUrl,
       audioUrl: voice.audioUrl,
@@ -80,17 +118,11 @@ export async function POST(req: NextRequest) {
     });
     console.log(`[pipeline] render: provider=${rendered.provider}`);
 
-    // ── Step 6: Storage upload ────────────────────────────────────────
-    const id = `vid_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const filename = `${id}.mp4`;
-    const stored = await uploadVideo(rendered.finalVideoUrl, filename);
+    const stored = await uploadVideo(rendered.finalVideoUrl, `${id}.mp4`);
     console.log(`[pipeline] storage: provider=${stored.provider}`);
 
-    // Compose the database-ready record. Fields match the Supabase
-    // video_generations table 1:1.
     const record: VideoGeneration = {
       id,
-      // TODO: replace with auth.uid() once Supabase Auth is wired up.
       user_id: "demo_user",
       product_image_url: input.productImage,
       product_name: input.productName || "Untitled product",
@@ -107,13 +139,10 @@ export async function POST(req: NextRequest) {
       created_at: new Date().toISOString(),
     };
 
-    // Persist to the shared workspace so both partners see this video in
-    // their gallery. Failure is non-fatal — the client still gets its
-    // record back and the file still exists in storage.
     await insertVideoGeneration(record);
 
     const totalMs = Date.now() - startedAt;
-    console.log(`[pipeline] done in ${totalMs}ms`);
+    console.log(`[pipeline] mock-mode done in ${totalMs}ms`);
 
     return NextResponse.json(record);
   } catch (err) {

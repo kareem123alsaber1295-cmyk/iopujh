@@ -60,13 +60,18 @@ export async function insertVideoGeneration(record: VideoGeneration): Promise<bo
 // Fetch all generations, newest first. Returns an empty array if Supabase
 // isn't configured or the query fails — callers should handle that as
 // "no shared history yet" rather than as an error.
+//
+// In-flight ("generating") rows are filtered out so the partner gallery
+// only ever shows finished or terminally-failed videos. The "generating"
+// state is owned by the originating browser tab, which is already showing
+// it via the progress UI.
 export async function listVideoGenerations(): Promise<VideoGeneration[]> {
   const config = getConfig();
   if (!config) return [];
 
   try {
     const res = await fetch(
-      `${config.url}/rest/v1/${TABLE}?order=created_at.desc&limit=200`,
+      `${config.url}/rest/v1/${TABLE}?status=in.(completed,failed)&order=created_at.desc&limit=200`,
       { headers: headers(config.key) },
     );
     if (!res.ok) {
@@ -77,6 +82,60 @@ export async function listVideoGenerations(): Promise<VideoGeneration[]> {
   } catch (err) {
     console.error("[db] list threw:", err);
     return [];
+  }
+}
+
+// Fetch a single generation by id. Returns null if not found or Supabase
+// isn't configured. Used by the status polling endpoint to look up the
+// pending record for an in-flight Seedance job.
+export async function getVideoGeneration(id: string): Promise<VideoGeneration | null> {
+  const config = getConfig();
+  if (!config) return null;
+
+  try {
+    const res = await fetch(
+      `${config.url}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}&limit=1`,
+      { headers: headers(config.key) },
+    );
+    if (!res.ok) {
+      console.error(`[db] get returned ${res.status}: ${await res.text()}`);
+      return null;
+    }
+    const rows = (await res.json()) as VideoGeneration[];
+    return rows[0] ?? null;
+  } catch (err) {
+    console.error("[db] get threw:", err);
+    return null;
+  }
+}
+
+// Patch a record in place. Used when a pending Seedance job completes and
+// we need to flip status to "completed" and fill in the final URLs.
+export async function updateVideoGeneration(
+  id: string,
+  updates: Partial<VideoGeneration>,
+): Promise<boolean> {
+  const config = getConfig();
+  if (!config) return false;
+
+  try {
+    const res = await fetch(
+      `${config.url}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}`,
+      {
+        method: "PATCH",
+        headers: { ...headers(config.key), Prefer: "return=minimal" },
+        body: JSON.stringify(updates),
+      },
+    );
+    if (!res.ok) {
+      console.error(`[db] update returned ${res.status}: ${await res.text()}`);
+      return false;
+    }
+    console.log(`[db] updated ${id}`);
+    return true;
+  } catch (err) {
+    console.error("[db] update threw:", err);
+    return false;
   }
 }
 
