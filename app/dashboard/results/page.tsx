@@ -73,6 +73,7 @@ export default function ResultsPage() {
   const [copied, setCopied] = useState<string | null>(null);
   const [photoImages, setPhotoImages] = useState<(string | null)[]>([null, null, null, null]);
   const [photoLoading, setPhotoLoading] = useState<boolean[]>([false, false, false, false]);
+  const [photoErrors, setPhotoErrors] = useState<(string | null)[]>([null, null, null, null]);
   const [regenerating, setRegenerating] = useState(false);
   const [exporting, setExporting] = useState(false);
   const photosTriggeredRef = useRef(false);
@@ -89,28 +90,54 @@ export default function ResultsPage() {
     photosTriggeredRef.current = true;
     setPhotoLoading([true, true, true, true]);
     setPhotoImages([null, null, null, null]);
+    setPhotoErrors([null, null, null, null]);
     const brandStyle = STYLE_MAP[product.style] || "clean";
+
+    console.log("[ProductPhotos] Generation started", {
+      productName: product.name,
+      brandStyle,
+      hasReferenceImage: !!product.referenceImageUrl,
+      referenceImageUrl: product.referenceImageUrl,
+    });
+
     await Promise.all(
       PHOTO_ANGLES.map(async (angle, idx) => {
+        const payload = {
+          productName: product.name,
+          productDescription: product.desc,
+          brandStyle,
+          targetAudience: product.audience,
+          imageType: PHOTO_FORMATS[idx],
+          angle,
+          referenceImageUrl: product.referenceImageUrl || null,
+        };
+
+        console.log(`[ProductPhotos] Requesting ${angle}`, payload);
+
         try {
           const res = await fetch("/api/generate-product-photo", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              productName: product.name,
-              productDescription: product.desc,
-              brandStyle,
-              targetAudience: product.audience,
-              imageType: PHOTO_FORMATS[idx],
-              angle,
-              referenceImageUrl: product.referenceImageUrl || null,
-            }),
+            body: JSON.stringify(payload),
           });
           const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Generation failed");
+
+          console.log(`[ProductPhotos] Response for ${angle}`, {
+            status: res.status,
+            ok: res.ok,
+            hasB64: !!data.b64,
+            b64Length: data.b64?.length,
+            error: data.error,
+          });
+
+          if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+          if (!data.b64) throw new Error("API returned OK but no image data (b64 missing)");
+
           setPhotoImages((prev) => { const n = [...prev]; n[idx] = data.b64; return n; });
         } catch (err) {
-          console.error(`Photo [${angle}] error:`, err);
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[ProductPhotos] Failed for ${angle}:`, msg);
+          setPhotoErrors((prev) => { const n = [...prev]; n[idx] = msg; return n; });
         } finally {
           setPhotoLoading((prev) => { const n = [...prev]; n[idx] = false; return n; });
         }
@@ -237,7 +264,7 @@ export default function ResultsPage() {
             transition={{ duration: 0.25 }}
           >
             {activeTab === "brand" && <BrandTab copy={copy} copied={copied} product={product} />}
-            {activeTab === "photos" && <ProductPhotosTab product={product} images={photoImages} loading={photoLoading} onRegenerate={() => { photosTriggeredRef.current = false; generatePhotos(true); }} />}
+            {activeTab === "photos" && <ProductPhotosTab product={product} images={photoImages} loading={photoLoading} errors={photoErrors} triggered={photosTriggeredRef.current} onRegenerate={() => { photosTriggeredRef.current = false; generatePhotos(true); }} />}
             {activeTab === "hooks" && <HooksTab copy={copy} copied={copied} product={product} />}
             {activeTab === "scripts" && <ScriptsTab copy={copy} copied={copied} product={product} />}
             {activeTab === "picture-ads" && <PictureAdsTab />}
@@ -877,11 +904,15 @@ function ProductPhotosTab({
   product,
   images,
   loading,
+  errors,
+  triggered,
   onRegenerate,
 }: {
   product: ProductData;
   images: (string | null)[];
   loading: boolean[];
+  errors: (string | null)[];
+  triggered: boolean;
   onRegenerate: () => void;
 }) {
   function downloadImage(b64: string, label: string) {
@@ -894,12 +925,13 @@ function ProductPhotosTab({
   }
 
   const isGenerating = loading.some(Boolean);
-  const doneCount = loading.filter((l) => !l).length;
+  const doneCount = images.filter(Boolean).length;
   const hasAny = images.some(Boolean);
+  const allFailed = triggered && !isGenerating && !hasAny && errors.some(Boolean);
 
   return (
     <div>
-      <div className="flex items-start gap-4 mb-6 p-4 bg-primary/5 border border-primary/15 rounded-2xl">
+      <div className="flex items-start gap-4 mb-4 p-4 bg-primary/5 border border-primary/15 rounded-2xl">
         <div className="w-10 h-10 gradient-bg rounded-xl flex items-center justify-center shrink-0">
           <Camera className="h-5 w-5 text-white" />
         </div>
@@ -914,15 +946,42 @@ function ProductPhotosTab({
             <p className="text-xs text-muted-foreground leading-relaxed">
               {hasAny
                 ? product.referenceImageUrl
-                  ? "Generated with FLUX Kontext — drag the slider to compare original vs AI."
+                  ? "Generated with BRIA Product Shot — drag the slider to compare original vs AI."
                   : "4 photorealistic images generated. Download as JPG."
-                : product.referenceImageUrl
-                  ? "Using your reference photo — FLUX Kontext will preserve structure while replacing branding."
-                  : "4 photorealistic images generated based on your product, brand style, and target audience."}
+                : triggered
+                  ? allFailed
+                    ? "All generations failed — see errors below."
+                    : "Generation complete."
+                  : product.name === "Your Product"
+                    ? "⚠ No product data found. Go back and complete the brand generator first."
+                    : "Starting generation…"}
             </p>
           )}
         </div>
       </div>
+
+      {/* Global error banner when all images failed */}
+      {allFailed && (
+        <div className="mb-5 p-4 bg-red-50 dark:bg-red-900/15 border border-red-200 dark:border-red-800 rounded-2xl">
+          <p className="text-sm font-bold text-red-600 dark:text-red-400 mb-1">Generation failed for all images</p>
+          <p className="text-xs text-red-500 dark:text-red-400 mb-2">First error: {errors.find(Boolean)}</p>
+          <p className="text-xs text-muted-foreground">
+            Check: (1) FAL_KEY env var is set in Vercel, (2) Open browser console for detailed logs,
+            (3) Click Regenerate to retry.
+          </p>
+        </div>
+      )}
+
+      {/* Not triggered + no product data */}
+      {!triggered && product.name === "Your Product" && (
+        <div className="mb-5 p-4 bg-amber-50 dark:bg-amber-900/15 border border-amber-200 dark:border-amber-700 rounded-2xl">
+          <p className="text-sm font-bold text-amber-700 dark:text-amber-400 mb-1">No product data loaded</p>
+          <p className="text-xs text-muted-foreground">
+            localStorage key <code className="bg-secondary px-1 py-0.5 rounded text-xs font-mono">ll_product</code> is
+            missing or empty. Complete the Brand Generator flow first, or click Regenerate to attempt anyway.
+          </p>
+        </div>
+      )}
 
       <div className="grid sm:grid-cols-2 gap-5">
         {photoShots.map((shot, i) => (
@@ -939,6 +998,22 @@ function ProductPhotosTab({
                 <div className="p-4 flex items-center gap-2">
                   <Loader2 className="h-3.5 w-3.5 animate-spin text-primary shrink-0" />
                   <p className="text-sm text-muted-foreground">Generating {PHOTO_ANGLES[i]}…</p>
+                </div>
+              </>
+            ) : errors[i] ? (
+              <>
+                <div className="h-56 bg-red-50 dark:bg-red-900/10 flex items-center justify-center px-6">
+                  <div className="text-center">
+                    <div className="w-10 h-10 bg-red-100 dark:bg-red-800/30 rounded-full flex items-center justify-center mx-auto mb-3">
+                      <span className="text-red-500 text-lg">✕</span>
+                    </div>
+                    <p className="text-xs font-bold text-red-600 dark:text-red-400 mb-1">Generation failed</p>
+                    <p className="text-xs text-red-500 break-all leading-relaxed">{errors[i]}</p>
+                  </div>
+                </div>
+                <div className="px-4 py-3">
+                  <p className="text-sm font-semibold">{shot.type}</p>
+                  <p className="text-xs text-red-500 mt-0.5">Failed — click Regenerate to retry</p>
                 </div>
               </>
             ) : images[i] ? (

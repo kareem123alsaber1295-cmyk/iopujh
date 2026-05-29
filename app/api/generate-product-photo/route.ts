@@ -76,8 +76,12 @@ const STRICT_REQUIREMENT =
 
 export async function POST(req: NextRequest) {
   try {
-    if (!process.env.FAL_KEY) {
-      return NextResponse.json({ error: "FAL_KEY not configured" }, { status: 500 });
+    const falKeyPresent = !!process.env.FAL_KEY;
+    console.log("[generate-product-photo] Request received, FAL_KEY present:", falKeyPresent);
+
+    if (!falKeyPresent) {
+      console.error("[generate-product-photo] FAL_KEY env var is not set");
+      return NextResponse.json({ error: "FAL_KEY not configured — add it to Vercel environment variables" }, { status: 500 });
     }
 
     const {
@@ -107,6 +111,14 @@ export async function POST(req: NextRequest) {
 
     const variationIdx = Math.min(Math.max(Number(variation) || 0, 0), 3);
 
+    console.log("[generate-product-photo]", {
+      productName,
+      photoType,
+      variationIdx,
+      hasReferenceImage: !!referenceImageUrl,
+      angle,
+    });
+
     const brandPart = brandName?.trim() ? ` for ${brandName.trim()} brand` : "";
     const colorPart = brandColors?.trim() ? `, inspired by color palette: ${brandColors.trim()}` : "";
     const descPart = productDescription?.trim() ? ` Product: ${productDescription.trim()}.` : "";
@@ -119,6 +131,8 @@ export async function POST(req: NextRequest) {
       const baseScene = scenes[variationIdx];
       const sceneDescription =
         `${baseScene}${brandPart}${colorPart}.${descPart} ${STRICT_REQUIREMENT}`;
+
+      console.log("[generate-product-photo] Calling BRIA product-shot", { referenceImageUrl, sceneDescription });
 
       const { data } = await fal.run("fal-ai/bria/product-shot", {
         input: {
@@ -134,6 +148,7 @@ export async function POST(req: NextRequest) {
       });
 
       imageUrl = data.images?.[0]?.url;
+      console.log("[generate-product-photo] BRIA returned imageUrl:", imageUrl);
     } else {
       // ── FLUX text-to-image fallback (no reference) ──────────────────────────
       const sceneBase = STYLE_TO_PROMPT[photoType] ?? STYLE_TO_PROMPT.shopify;
@@ -157,14 +172,17 @@ export async function POST(req: NextRequest) {
       });
 
       imageUrl = data.images?.[0]?.url;
+      console.log("[generate-product-photo] FLUX returned imageUrl:", imageUrl);
     }
 
-    if (!imageUrl) throw new Error("No image URL returned from model");
+    if (!imageUrl) throw new Error("No image URL returned from model — images array may be empty");
+    console.log("[generate-product-photo] Fetching image from URL:", imageUrl);
 
     const imgRes = await fetch(imageUrl);
     const buffer = await imgRes.arrayBuffer();
     const b64 = Buffer.from(buffer).toString("base64");
 
+    console.log("[generate-product-photo] Success, b64 length:", b64.length);
     return NextResponse.json({ angle: angle || `variation-${variationIdx}`, b64 });
   } catch (err) {
     console.error("generate-product-photo error:", err);

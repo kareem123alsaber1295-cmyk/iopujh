@@ -177,6 +177,8 @@ export default function PictureAdsPage() {
 
   const [generating, setGenerating] = useState(false);
   const [images, setImages] = useState<ImageState[]>([]);
+  const [testMode, setTestMode] = useState(false);
+  const [testResult, setTestResult] = useState<{ raw: string; b64?: string; error?: string } | null>(null);
 
   const hasStarted = images.length > 0;
   const doneCount = images.filter((img) => !img.loading).length;
@@ -230,19 +232,34 @@ export default function PictureAdsPage() {
   // ── Generation ──────────────────────────────────────────────────────────────
 
   async function fetchOne(variation: number, params: object): Promise<void> {
+    const payload = { ...params, variation, photoType };
+    console.log(`[PictureAds] Requesting variation ${variation}`, payload);
+
     try {
       const res = await fetch("/api/generate-product-photo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...params, variation, photoType }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Generation failed");
+
+      console.log(`[PictureAds] Response variation ${variation}`, {
+        status: res.status,
+        ok: res.ok,
+        hasB64: !!data.b64,
+        b64Length: data.b64?.length,
+        error: data.error,
+      });
+
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (!data.b64) throw new Error("API returned OK but no image data (b64 missing)");
+
       setImages((prev) =>
         prev.map((img) => img.variation === variation ? { ...img, b64: data.b64, loading: false, error: null } : img)
       );
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed";
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[PictureAds] Failed variation ${variation}:`, msg);
       setImages((prev) =>
         prev.map((img) => img.variation === variation ? { ...img, loading: false, error: msg } : img)
       );
@@ -252,6 +269,7 @@ export default function PictureAdsPage() {
   async function handleGenerate() {
     if (!productName.trim()) return;
     setGenerating(true);
+    setTestResult(null);
     setImages(VARIATIONS.map(({ idx }) => ({ variation: idx, b64: null, loading: true, error: null })));
 
     const params = {
@@ -262,8 +280,47 @@ export default function PictureAdsPage() {
       referenceImageUrl: productUrl || null,
     };
 
+    console.log("[PictureAds] Generate started", { photoType, params });
     await Promise.all(VARIATIONS.map(({ idx }) => fetchOne(idx, params)));
     setGenerating(false);
+  }
+
+  async function handleTestOne() {
+    if (!productName.trim()) {
+      setTestResult({ raw: "Error: productName is required", error: "productName is required" });
+      return;
+    }
+    setTestMode(true);
+    setTestResult(null);
+
+    const payload = {
+      productName: productName.trim(),
+      productDescription: productDescription.trim(),
+      brandName: brandName.trim(),
+      brandColors: brandColors.trim(),
+      referenceImageUrl: productUrl || null,
+      photoType,
+      variation: 0,
+    };
+
+    console.log("[PictureAds] Test mode payload:", payload);
+
+    try {
+      const res = await fetch("/api/generate-product-photo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      const raw = JSON.stringify({ status: res.status, ok: res.ok, keys: Object.keys(data), hasB64: !!data.b64, b64Length: data.b64?.length, error: data.error }, null, 2);
+      console.log("[PictureAds] Test response:", data);
+      setTestResult({ raw, b64: data.b64, error: data.error || (!data.b64 ? "No b64 in response" : undefined) });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setTestResult({ raw: msg, error: msg });
+    } finally {
+      setTestMode(false);
+    }
   }
 
   function downloadImage(b64: string, variation: number) {
@@ -386,11 +443,34 @@ export default function PictureAdsPage() {
           </div>
         </div>
 
+        {/* Test result panel */}
+        {testResult && (
+          <div className={`p-4 rounded-xl border text-xs font-mono whitespace-pre-wrap break-all ${testResult.error ? "bg-red-50 dark:bg-red-900/15 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400" : "bg-emerald-50 dark:bg-emerald-900/15 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300"}`}>
+            <p className="font-bold mb-2">{testResult.error ? "Test failed" : "Test passed — image returned"}</p>
+            {testResult.b64 && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={`data:image/jpeg;base64,${testResult.b64}`} alt="Test output" className="w-full rounded-lg mb-2 max-h-48 object-contain bg-black/5" />
+            )}
+            <pre className="text-[11px] overflow-auto max-h-32">{testResult.raw}</pre>
+          </div>
+        )}
+
+        {/* Buttons row */}
+        <div className="flex gap-2">
+          <button
+            onClick={handleTestOne}
+            disabled={testMode || generating || uploadingProduct}
+            className="shrink-0 border border-border bg-secondary hover:bg-secondary/70 text-foreground font-semibold py-3 px-4 rounded-xl transition-all disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 text-sm"
+            title="Generate 1 image and show raw API response for debugging"
+          >
+            {testMode ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-xs">Test (1)</span>}
+          </button>
+
         {/* Generate Button */}
         <button
           onClick={handleGenerate}
           disabled={generating || !productName.trim() || uploadingProduct}
-          className="w-full gradient-bg text-white font-semibold py-3 rounded-xl hover:opacity-90 transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          className="flex-1 gradient-bg text-white font-semibold py-3 rounded-xl hover:opacity-90 transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           {generating ? (
             <>
@@ -409,6 +489,7 @@ export default function PictureAdsPage() {
             </>
           )}
         </button>
+        </div>
       </div>
 
       {/* Results Grid */}
