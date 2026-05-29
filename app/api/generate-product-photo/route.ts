@@ -4,7 +4,10 @@ import { fal } from "@fal-ai/client";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-// ─── BRIA scene configurations ────────────────────────────────────────────────
+// ─── Scene configurations ─────────────────────────────────────────────────────
+
+const POSITIVE_SUFFIX =
+  " Bright, well-lit scene. Product clearly visible against background. Professional studio quality. No dark canvas. No silhouette. No underexposed image.";
 
 const PHOTO_SCENES: Record<string, string[]> = {
   shopify: [
@@ -20,10 +23,10 @@ const PHOTO_SCENES: Record<string, string[]> = {
     "Clean white background, bright even lighting, Amazon listing quality, professional product photography, ecommerce standard",
   ],
   luxury: [
-    "Dark moody background, dramatic chiaroscuro side lighting, luxury skincare advertisement, high-end beauty editorial, prestige cosmetics brand aesthetic",
-    "Deep navy background with warm gold light accents, luxury cosmetics advertisement photography, Chanel and La Mer aesthetic, premium beauty brand",
-    "Black marble surface, atmospheric mood lighting, luxury beauty editorial photography, dramatic shadows, high-end skincare advertisement",
-    "Dark charcoal gradient background, silver rim lighting, ultra-luxury skincare advertisement, Tom Ford and Byredo brand aesthetic",
+    "Deep charcoal background with warm directional side lighting, luxury skincare advertisement, product clearly illuminated, high-end beauty editorial, prestige cosmetics brand aesthetic",
+    "Deep navy background with warm gold accent lighting, luxury cosmetics advertisement photography, product front-lit, premium beauty brand",
+    "Dark stone surface with atmospheric mood lighting, luxury beauty editorial photography, product well-lit from front, high-end skincare advertisement",
+    "Dark charcoal gradient background with silver rim lighting, ultra-luxury skincare advertisement, product distinctly visible",
   ],
   bathroom: [
     "Modern white marble bathroom countertop, soft diffused natural window light, aspirational lifestyle skincare photography, clean luxury bathroom setting",
@@ -32,7 +35,7 @@ const PHOTO_SCENES: Record<string, string[]> = {
     "White ceramic bathroom surface, fresh botanical elements, bright natural light, clean minimal lifestyle photography, wellness brand aesthetic",
   ],
   tiktok: [
-    "Vibrant pink to purple gradient background, bold Gen-Z aesthetic, TikTok ecommerce product photography, eye-catching social media visual",
+    "Vibrant pink to purple gradient background, bold Gen-Z aesthetic, TikTok ecommerce product photography, eye-catching social media visual, brightly lit product",
     "Neon gradient background, trendy social media product photography, TikTok-native visual style, bold saturated colors, viral aesthetic",
     "Bright pastel gradient background, Instagram and TikTok optimized product photography, trendy beauty brand aesthetic, social commerce",
     "Bold colorful gradient, energetic Gen-Z social media aesthetic, TikTok product shot, vibrant ecommerce photography",
@@ -46,10 +49,10 @@ const PHOTO_SCENES: Record<string, string[]> = {
 };
 
 const ANGLE_TO_TYPE: Record<string, { type: string; variation: number }> = {
-  "Hero Shot":         { type: "shopify",   variation: 0 },
-  "Lifestyle Context": { type: "bathroom",  variation: 0 },
-  "Ad Composition":    { type: "meta-ad",   variation: 0 },
-  "Detail Close-up":   { type: "luxury",    variation: 0 },
+  "Hero Shot":         { type: "shopify",  variation: 0 },
+  "Lifestyle Context": { type: "bathroom", variation: 0 },
+  "Ad Composition":    { type: "meta-ad",  variation: 0 },
+  "Detail Close-up":   { type: "luxury",   variation: 0 },
 };
 
 const MODE_TO_TYPE: Record<string, string> = {
@@ -60,16 +63,19 @@ const MODE_TO_TYPE: Record<string, string> = {
 };
 
 const STYLE_TO_PROMPT: Record<string, string> = {
-  shopify: "Clean white studio background, professional ecommerce product photography, Shopify hero image quality, soft box lighting, sharp focus",
-  amazon: "Pure white background, Amazon listing photography, neutral studio lighting, commercial product photography",
-  luxury: "Dark luxury background, dramatic lighting, premium beauty advertisement, high-end skincare editorial",
-  bathroom: "Marble bathroom counter, natural light, lifestyle skincare photography, luxury bathroom setting",
-  tiktok: "Vibrant gradient background, TikTok ecommerce visual, bold Gen-Z aesthetic, social media product photography",
+  shopify:  "Clean bright white studio background, professional ecommerce product photography, Shopify hero image quality, soft box lighting, sharp focus",
+  amazon:   "Pure white background, Amazon listing photography, bright neutral studio lighting, commercial product photography",
+  luxury:   "Elegant dark background with product clearly illuminated, premium beauty advertisement, high-end skincare editorial, product distinctly visible",
+  bathroom: "Marble bathroom counter, natural bright light, lifestyle skincare photography, luxury bathroom setting",
+  tiktok:   "Vibrant colorful gradient background, TikTok ecommerce visual, bold Gen-Z aesthetic, brightly lit product",
   "meta-ad": "Lifestyle background, Meta ad quality, DTC brand photography, scroll-stopping product image",
 };
 
 const STRICT_REQUIREMENT =
   "Professional ecommerce product photography. Preserve exact product shape, bottle structure, label placement, and proportions. Photorealistic, commercial studio quality.";
+
+const NEGATIVE_PROMPT =
+  "black image, black background, completely dark image, silhouette, underexposed, empty frame, blank image, invisible product, pitch black, no product visible";
 
 function isForbiddenError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
@@ -79,14 +85,12 @@ function isForbiddenError(err: unknown): boolean {
 export async function POST(req: NextRequest) {
   try {
     const FAL_KEY = process.env.FAL_KEY;
-    const keyPresent = !!FAL_KEY;
-    console.log("[generate-product-photo] FAL_KEY present:", keyPresent, "| prefix:", FAL_KEY ? FAL_KEY.slice(0, 6) + "..." : "none");
+    console.log("[generate-product-photo] FAL_KEY present:", !!FAL_KEY, "prefix:", FAL_KEY ? FAL_KEY.slice(0, 6) + "..." : "none");
 
     if (!FAL_KEY) {
       return NextResponse.json({ error: "FAL_KEY not configured — add it to Vercel environment variables" }, { status: 500 });
     }
 
-    // Explicit auth config — required for Vercel serverless; auto-read is not reliable
     fal.config({ credentials: FAL_KEY });
 
     const {
@@ -115,27 +119,22 @@ export async function POST(req: NextRequest) {
 
     const variationIdx = Math.min(Math.max(Number(variation) || 0, 0), 3);
 
-    console.log("[generate-product-photo]", {
-      productName,
-      photoType,
-      variationIdx,
-      hasReferenceImage: !!referenceImageUrl,
-      angle: angle || "(none)",
-    });
+    console.log("[generate-product-photo]", { productName, photoType, variationIdx, hasRef: !!referenceImageUrl });
 
     const brandPart = brandName?.trim() ? ` for ${brandName.trim()} brand` : "";
     const colorPart = brandColors?.trim() ? `, inspired by color palette: ${brandColors.trim()}` : "";
     const descPart = productDescription?.trim() ? ` Product: ${productDescription.trim()}.` : "";
 
-    let imageUrl: string;
+    let imageUrl: string | undefined;
+    let falResponseDebug: object = {};
 
     if (referenceImageUrl) {
-      // ── BRIA Product Shot (image-to-image) ──────────────────────────────────
+      // ── BRIA Product Shot ──────────────────────────────────────────────────
       const scenes = PHOTO_SCENES[photoType] ?? PHOTO_SCENES.shopify;
       const sceneDescription =
-        `${scenes[variationIdx]}${brandPart}${colorPart}.${descPart} ${STRICT_REQUIREMENT}`;
+        `${scenes[variationIdx]}${POSITIVE_SUFFIX}${brandPart}${colorPart}.${descPart} ${STRICT_REQUIREMENT}`;
 
-      console.log("[generate-product-photo] Calling fal-ai/bria/product-shot");
+      console.log("[generate-product-photo] Calling BRIA product-shot, scene:", scenes[variationIdx].slice(0, 60) + "...");
 
       const { data } = await fal.run("fal-ai/bria/product-shot", {
         input: {
@@ -150,22 +149,32 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      imageUrl = data.images?.[0]?.url;
-      console.log("[generate-product-photo] BRIA imageUrl received:", !!imageUrl);
+      const imagesArray = (data as { images?: { url: string }[] }).images;
+      falResponseDebug = {
+        model: "bria/product-shot",
+        imagesCount: imagesArray?.length ?? 0,
+        firstImageKeys: imagesArray?.[0] ? Object.keys(imagesArray[0]) : [],
+      };
+      console.log("[generate-product-photo] BRIA response:", falResponseDebug);
+
+      imageUrl = imagesArray?.[0]?.url;
     } else {
-      // ── FLUX text-to-image fallback (no reference image) ────────────────────
+      // ── FLUX text-to-image fallback ────────────────────────────────────────
       const sceneBase = STYLE_TO_PROMPT[photoType] ?? STYLE_TO_PROMPT.shopify;
       const prompt =
         `Realistic ecommerce product photograph for ${productName.trim()}. ` +
         descPart +
         (targetAudience?.trim() ? ` Target audience: ${targetAudience.trim()}.` : "") +
         ` ${sceneBase}${brandPart}${colorPart}. ` +
-        "Ultra-realistic, sharp focus, professional studio quality, no distorted geometry, no warped labels, no floating elements, commercial photography.";
+        "Ultra-realistic, sharp focus, professional studio quality, no distorted geometry, no warped labels, no floating elements, commercial photography." +
+        " Bright, well-lit, product clearly visible.";
 
-      const AR_MAP: Record<string, "1:1" | "3:4" | "9:16" | "16:9"> = { square: "1:1", portrait: "3:4", story: "9:16", landscape: "16:9" };
+      const AR_MAP: Record<string, "1:1" | "3:4" | "9:16" | "16:9"> = {
+        square: "1:1", portrait: "3:4", story: "9:16", landscape: "16:9",
+      };
       const aspectRatio = AR_MAP[imageType as string] ?? "1:1";
 
-      console.log("[generate-product-photo] Calling fal-ai/flux-pro/kontext/text-to-image");
+      console.log("[generate-product-photo] Calling FLUX text-to-image");
 
       const { data } = await fal.run("fal-ai/flux-pro/kontext/text-to-image", {
         input: {
@@ -176,18 +185,53 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      imageUrl = data.images?.[0]?.url;
-      console.log("[generate-product-photo] FLUX imageUrl received:", !!imageUrl);
+      const imagesArray = (data as { images?: { url: string }[] }).images;
+      falResponseDebug = {
+        model: "flux-pro/kontext/text-to-image",
+        imagesCount: imagesArray?.length ?? 0,
+        firstImageKeys: imagesArray?.[0] ? Object.keys(imagesArray[0]) : [],
+      };
+      console.log("[generate-product-photo] FLUX response:", falResponseDebug);
+
+      imageUrl = imagesArray?.[0]?.url;
     }
 
-    if (!imageUrl) throw new Error("No image URL returned from model — images array may be empty");
+    if (!imageUrl) {
+      console.error("[generate-product-photo] No imageUrl in response:", falResponseDebug);
+      throw new Error(`No image URL in model response. Debug: ${JSON.stringify(falResponseDebug)}`);
+    }
 
+    console.log("[generate-product-photo] Downloading image from:", imageUrl.slice(0, 80) + "...");
+
+    // ── Download and validate the image ──────────────────────────────────────
     const imgRes = await fetch(imageUrl);
+
+    if (!imgRes.ok) {
+      const errBody = await imgRes.text();
+      throw new Error(`Image download failed: HTTP ${imgRes.status}. Body: ${errBody.slice(0, 200)}`);
+    }
+
+    const contentType = imgRes.headers.get("content-type") ?? "application/octet-stream";
+    console.log("[generate-product-photo] Download status:", imgRes.status, "content-type:", contentType);
+
+    if (!contentType.startsWith("image/")) {
+      const errBody = await imgRes.text();
+      throw new Error(`Provider returned non-image: ${contentType}. Body: ${errBody.slice(0, 200)}`);
+    }
+
     const buffer = await imgRes.arrayBuffer();
+    const imageSize = buffer.byteLength;
     const b64 = Buffer.from(buffer).toString("base64");
 
-    console.log("[generate-product-photo] Success, b64 length:", b64.length);
-    return NextResponse.json({ angle: angle || `variation-${variationIdx}`, b64 });
+    console.log("[generate-product-photo] Success — contentType:", contentType, "size:", imageSize, "bytes");
+
+    return NextResponse.json({
+      angle: angle || `variation-${variationIdx}`,
+      b64,
+      contentType,
+      imageUrl,
+      imageSize,
+    });
   } catch (err) {
     console.error("[generate-product-photo] Error:", err instanceof Error ? err.message : err);
 

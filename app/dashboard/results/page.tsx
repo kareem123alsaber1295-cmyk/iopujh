@@ -72,6 +72,8 @@ export default function ResultsPage() {
   const [activeTab, setActiveTab] = useState("brand");
   const [copied, setCopied] = useState<string | null>(null);
   const [photoImages, setPhotoImages] = useState<(string | null)[]>([null, null, null, null]);
+  const [photoContentTypes, setPhotoContentTypes] = useState<string[]>(["image/jpeg", "image/jpeg", "image/jpeg", "image/jpeg"]);
+  const [photoImageUrls, setPhotoImageUrls] = useState<(string | null)[]>([null, null, null, null]);
   const [photoLoading, setPhotoLoading] = useState<boolean[]>([false, false, false, false]);
   const [photoErrors, setPhotoErrors] = useState<(string | null)[]>([null, null, null, null]);
   const [regenerating, setRegenerating] = useState(false);
@@ -90,6 +92,8 @@ export default function ResultsPage() {
     photosTriggeredRef.current = true;
     setPhotoLoading([true, true, true, true]);
     setPhotoImages([null, null, null, null]);
+    setPhotoContentTypes(["image/jpeg", "image/jpeg", "image/jpeg", "image/jpeg"]);
+    setPhotoImageUrls([null, null, null, null]);
     setPhotoErrors([null, null, null, null]);
     const brandStyle = STYLE_MAP[product.style] || "clean";
 
@@ -134,6 +138,8 @@ export default function ResultsPage() {
           if (!data.b64) throw new Error("API returned OK but no image data (b64 missing)");
 
           setPhotoImages((prev) => { const n = [...prev]; n[idx] = data.b64; return n; });
+          setPhotoContentTypes((prev) => { const n = [...prev]; n[idx] = data.contentType || "image/jpeg"; return n; });
+          setPhotoImageUrls((prev) => { const n = [...prev]; n[idx] = data.imageUrl || null; return n; });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.error(`[ProductPhotos] Failed for ${angle}:`, msg);
@@ -264,7 +270,7 @@ export default function ResultsPage() {
             transition={{ duration: 0.25 }}
           >
             {activeTab === "brand" && <BrandTab copy={copy} copied={copied} product={product} />}
-            {activeTab === "photos" && <ProductPhotosTab product={product} images={photoImages} loading={photoLoading} errors={photoErrors} triggered={photosTriggeredRef.current} onRegenerate={() => { photosTriggeredRef.current = false; generatePhotos(true); }} />}
+            {activeTab === "photos" && <ProductPhotosTab product={product} images={photoImages} contentTypes={photoContentTypes} imageUrls={photoImageUrls} loading={photoLoading} errors={photoErrors} triggered={photosTriggeredRef.current} onRegenerate={() => { photosTriggeredRef.current = false; generatePhotos(true); }} />}
             {activeTab === "hooks" && <HooksTab copy={copy} copied={copied} product={product} />}
             {activeTab === "scripts" && <ScriptsTab copy={copy} copied={copied} product={product} />}
             {activeTab === "picture-ads" && <PictureAdsTab />}
@@ -878,7 +884,9 @@ function BeforeAfterSlider({ before, after, alt }: { before: string; after: stri
   return (
     <div ref={containerRef} className="relative select-none cursor-ew-resize overflow-hidden" onPointerMove={onPointerMove}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={`data:image/jpeg;base64,${after}`} alt={alt} className="w-full block" draggable={false} />
+      {/* after is already a full URL or data URL */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={after} alt={alt} className="w-full block" draggable={false} />
       <div className="absolute inset-0 overflow-hidden pointer-events-none" style={{ width: `${pos}%` }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={before} alt="Original" className="absolute inset-0 block" style={{ width: `${10000 / pos}%`, maxWidth: "none" }} draggable={false} />
@@ -903,6 +911,8 @@ function BeforeAfterSlider({ before, after, alt }: { before: string; after: stri
 function ProductPhotosTab({
   product,
   images,
+  contentTypes,
+  imageUrls,
   loading,
   errors,
   triggered,
@@ -910,15 +920,19 @@ function ProductPhotosTab({
 }: {
   product: ProductData;
   images: (string | null)[];
+  contentTypes: string[];
+  imageUrls: (string | null)[];
   loading: boolean[];
   errors: (string | null)[];
   triggered: boolean;
   onRegenerate: () => void;
 }) {
-  function downloadImage(b64: string, label: string) {
+  function downloadImage(b64: string, label: string, idx: number) {
+    const ct = contentTypes[idx] || "image/jpeg";
+    const ext = ct.includes("png") ? "png" : ct.includes("webp") ? "webp" : "jpg";
     const a = document.createElement("a");
-    a.href = `data:image/jpeg;base64,${b64}`;
-    a.download = `${product.name.replace(/\s+/g, "-").toLowerCase()}-${label.replace(/\s+/g, "-").toLowerCase()}.jpg`;
+    a.href = imageUrls[idx] || `data:${ct};base64,${b64}`;
+    a.download = `${product.name.replace(/\s+/g, "-").toLowerCase()}-${label.replace(/\s+/g, "-").toLowerCase()}.${ext}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1022,14 +1036,15 @@ function ProductPhotosTab({
                   {product.referenceImageUrl ? (
                     <BeforeAfterSlider
                       before={product.referenceImageUrl}
-                      after={images[i]!}
+                      after={imageUrls[i] || `data:${contentTypes[i]};base64,${images[i]}`}
                       alt={`${product.name} – ${shot.type}`}
                     />
                   ) : (
                     <>
+                      {/* Use direct URL when available — avoids MIME/base64 mismatch */}
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={`data:image/jpeg;base64,${images[i]}`}
+                        src={imageUrls[i] || `data:${contentTypes[i]};base64,${images[i]}`}
                         alt={`${product.name} – ${shot.type}`}
                         className="w-full object-cover"
                       />
@@ -1041,7 +1056,7 @@ function ProductPhotosTab({
                       </div>
                       <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
-                          onClick={() => downloadImage(images[i]!, shot.type)}
+                          onClick={() => downloadImage(images[i]!, shot.type, i)}
                           className="p-2 rounded-lg bg-black/60 text-white backdrop-blur-sm hover:bg-black/80 transition-colors"
                         >
                           <Download className="h-4 w-4" />
@@ -1056,11 +1071,11 @@ function ProductPhotosTab({
                     <p className="text-xs text-muted-foreground mt-0.5">{shot.desc}</p>
                   </div>
                   <button
-                    onClick={() => downloadImage(images[i]!, shot.type)}
+                    onClick={() => downloadImage(images[i]!, shot.type, i)}
                     className="flex items-center gap-1.5 text-xs text-primary font-medium hover:underline shrink-0 ml-3"
                   >
                     <Download className="h-3.5 w-3.5" />
-                    Download PNG
+                    Download
                   </button>
                 </div>
               </>

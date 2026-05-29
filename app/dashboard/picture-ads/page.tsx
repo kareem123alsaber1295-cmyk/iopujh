@@ -53,13 +53,16 @@ const VARIATIONS = [
 interface ImageState {
   variation: number;
   b64: string | null;
+  contentType: string;
+  imageUrl: string | null;
+  imageSize: number | null;
   loading: boolean;
   error: string | null;
 }
 
 // ─── Before/After Slider ──────────────────────────────────────────────────────
 
-function BeforeAfterSlider({ before, after, alt }: { before: string; after: string; alt: string }) {
+function BeforeAfterSlider({ before, after, contentType = "image/jpeg", alt }: { before: string; after: string; contentType?: string; alt: string }) {
   const [pos, setPos] = useState(50);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -73,7 +76,7 @@ function BeforeAfterSlider({ before, after, alt }: { before: string; after: stri
   return (
     <div ref={containerRef} className="relative select-none cursor-ew-resize overflow-hidden" onPointerMove={onPointerMove}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={`data:image/jpeg;base64,${after}`} alt={alt} className="w-full block" draggable={false} />
+      <img src={`data:${contentType};base64,${after}`} alt={alt} className="w-full block" draggable={false} />
       <div className="absolute inset-0 overflow-hidden pointer-events-none" style={{ width: `${pos}%` }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={before} alt="Original" className="absolute inset-0 block" style={{ width: `${10000 / pos}%`, maxWidth: "none" }} draggable={false} />
@@ -178,7 +181,8 @@ export default function PictureAdsPage() {
   const [generating, setGenerating] = useState(false);
   const [images, setImages] = useState<ImageState[]>([]);
   const [testMode, setTestMode] = useState(false);
-  const [testResult, setTestResult] = useState<{ raw: string; b64?: string; error?: string } | null>(null);
+  const [testResult, setTestResult] = useState<{ raw: string; b64?: string; contentType?: string; imageUrl?: string; error?: string } | null>(null);
+  const [showDebug, setShowDebug] = useState(false);
 
   const hasStarted = images.length > 0;
   const doneCount = images.filter((img) => !img.loading).length;
@@ -248,6 +252,9 @@ export default function PictureAdsPage() {
         ok: res.ok,
         hasB64: !!data.b64,
         b64Length: data.b64?.length,
+        contentType: data.contentType,
+        imageUrl: data.imageUrl?.slice(0, 60) + "...",
+        imageSize: data.imageSize,
         error: data.error,
       });
 
@@ -255,7 +262,10 @@ export default function PictureAdsPage() {
       if (!data.b64) throw new Error("API returned OK but no image data (b64 missing)");
 
       setImages((prev) =>
-        prev.map((img) => img.variation === variation ? { ...img, b64: data.b64, loading: false, error: null } : img)
+        prev.map((img) => img.variation === variation
+          ? { ...img, b64: data.b64, contentType: data.contentType || "image/jpeg", imageUrl: data.imageUrl || null, imageSize: data.imageSize || null, loading: false, error: null }
+          : img
+        )
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -270,7 +280,7 @@ export default function PictureAdsPage() {
     if (!productName.trim()) return;
     setGenerating(true);
     setTestResult(null);
-    setImages(VARIATIONS.map(({ idx }) => ({ variation: idx, b64: null, loading: true, error: null })));
+    setImages(VARIATIONS.map(({ idx }) => ({ variation: idx, b64: null, contentType: "image/jpeg", imageUrl: null, imageSize: null, loading: true, error: null })));
 
     const params = {
       productName: productName.trim(),
@@ -312,9 +322,19 @@ export default function PictureAdsPage() {
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      const raw = JSON.stringify({ status: res.status, ok: res.ok, keys: Object.keys(data), hasB64: !!data.b64, b64Length: data.b64?.length, error: data.error }, null, 2);
-      console.log("[PictureAds] Test response:", data);
-      setTestResult({ raw, b64: data.b64, error: data.error || (!data.b64 ? "No b64 in response" : undefined) });
+      const raw = JSON.stringify({
+        status: res.status,
+        ok: res.ok,
+        keys: Object.keys(data),
+        hasB64: !!data.b64,
+        b64Length: data.b64?.length,
+        contentType: data.contentType,
+        imageUrl: data.imageUrl ? data.imageUrl.slice(0, 80) + "..." : null,
+        imageSize: data.imageSize,
+        error: data.error,
+      }, null, 2);
+      console.log("[PictureAds] Test response:", { ...data, b64: data.b64 ? `[${data.b64.length} chars]` : null });
+      setTestResult({ raw, b64: data.b64, contentType: data.contentType, imageUrl: data.imageUrl, error: data.error || (!data.b64 ? "No b64 in response" : undefined) });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setTestResult({ raw: msg, error: msg });
@@ -324,9 +344,13 @@ export default function PictureAdsPage() {
   }
 
   function downloadImage(b64: string, variation: number) {
+    const img = images.find((i) => i.variation === variation);
+    const ct = img?.contentType || "image/jpeg";
+    const ext = ct.includes("png") ? "png" : ct.includes("webp") ? "webp" : "jpg";
     const a = document.createElement("a");
-    a.href = `data:image/jpeg;base64,${b64}`;
-    a.download = `${productName.replace(/\s+/g, "-").toLowerCase()}-${photoType}-v${variation + 1}.jpg`;
+    // Prefer direct URL download if available, otherwise use base64
+    a.href = img?.imageUrl || `data:${ct};base64,${b64}`;
+    a.download = `${productName.replace(/\s+/g, "-").toLowerCase()}-${photoType}-v${variation + 1}.${ext}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -446,10 +470,21 @@ export default function PictureAdsPage() {
         {/* Test result panel */}
         {testResult && (
           <div className={`p-4 rounded-xl border text-xs font-mono whitespace-pre-wrap break-all ${testResult.error ? "bg-red-50 dark:bg-red-900/15 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400" : "bg-emerald-50 dark:bg-emerald-900/15 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300"}`}>
-            <p className="font-bold mb-2">{testResult.error ? "Test failed" : "Test passed — image returned"}</p>
-            {testResult.b64 && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={`data:image/jpeg;base64,${testResult.b64}`} alt="Test output" className="w-full rounded-lg mb-2 max-h-48 object-contain bg-black/5" />
+            <p className="font-bold mb-2">{testResult.error ? "Test failed" : `Test passed — ${testResult.contentType || "image"} received`}</p>
+            {/* Try direct URL first — avoids any encoding issues */}
+            {testResult.imageUrl && !testResult.error && (
+              <div className="mb-2">
+                <p className="text-[10px] mb-1 opacity-70">Direct URL render:</p>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={testResult.imageUrl} alt="Test output (direct URL)" className="w-full rounded-lg max-h-48 object-contain bg-black/5" />
+              </div>
+            )}
+            {testResult.b64 && !testResult.imageUrl && !testResult.error && (
+              <div className="mb-2">
+                <p className="text-[10px] mb-1 opacity-70">Base64 render ({testResult.contentType}):</p>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={`data:${testResult.contentType || "image/jpeg"};base64,${testResult.b64}`} alt="Test output (base64)" className="w-full rounded-lg max-h-48 object-contain bg-black/5" />
+              </div>
             )}
             <pre className="text-[11px] overflow-auto max-h-32">{testResult.raw}</pre>
           </div>
@@ -535,11 +570,16 @@ export default function PictureAdsPage() {
                   ) : img.b64 ? (
                     <>
                       {productPreview ? (
-                        <BeforeAfterSlider before={productPreview} after={img.b64} alt={`${productName} – ${meta.label}`} />
+                        <BeforeAfterSlider before={productPreview} after={img.b64!} contentType={img.contentType} alt={`${productName} – ${meta.label}`} />
                       ) : (
                         <div className="relative">
+                          {/* Use direct URL when available — avoids any base64/MIME mismatch */}
                           {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={`data:image/jpeg;base64,${img.b64}`} alt={`${productName} – ${meta.label}`} className="w-full object-cover" />
+                          <img
+                            src={img.imageUrl || `data:${img.contentType};base64,${img.b64}`}
+                            alt={`${productName} – ${meta.label}`}
+                            className="w-full object-cover"
+                          />
                           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
                           <div className="absolute top-3 left-3">
                             <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-black/60 text-white backdrop-blur-sm">{meta.label}</span>
@@ -554,13 +594,28 @@ export default function PictureAdsPage() {
                       <div className="px-4 py-3 flex items-center justify-between">
                         <div>
                           <p className="text-sm font-semibold">{meta.label}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">{selectedType.label} · BRIA Product Shot</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {selectedType.label} · {img.contentType || "image/jpeg"} · {img.imageSize ? `${Math.round(img.imageSize / 1024)}KB` : ""}
+                          </p>
                         </div>
-                        <button onClick={() => downloadImage(img.b64!, img.variation)} className="flex items-center gap-1.5 text-xs text-primary font-medium hover:underline shrink-0">
-                          <Download className="h-3.5 w-3.5" />
-                          Download JPG
-                        </button>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button onClick={() => setShowDebug((v) => !v)} className="text-[10px] text-muted-foreground hover:text-foreground transition-colors">
+                            {showDebug ? "Hide debug" : "Debug"}
+                          </button>
+                          <button onClick={() => downloadImage(img.b64!, img.variation)} className="flex items-center gap-1.5 text-xs text-primary font-medium hover:underline">
+                            <Download className="h-3.5 w-3.5" />
+                            Download
+                          </button>
+                        </div>
                       </div>
+                      {showDebug && (
+                        <div className="px-4 pb-3 text-[10px] font-mono bg-secondary/30 border-t border-border space-y-0.5 text-muted-foreground">
+                          <p>contentType: {img.contentType}</p>
+                          <p>imageSize: {img.imageSize ? `${img.imageSize} bytes` : "n/a"}</p>
+                          <p className="break-all">imageUrl: {img.imageUrl ? img.imageUrl.slice(0, 80) + "..." : "none (using base64)"}</p>
+                          <p>b64 length: {img.b64?.length ?? 0}</p>
+                        </div>
+                      )}
                     </>
                   ) : null}
                 </motion.div>
