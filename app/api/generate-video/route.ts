@@ -29,9 +29,10 @@ export const runtime = "nodejs";
 // under a second. 60s is way more than enough headroom.
 export const maxDuration = 60;
 
-// Prefix we stash in raw_video_url while a Seedance job is in flight. Lets
-// the status endpoint recover the fal.ai request_id without adding a new
-// Supabase column.
+// Prefix we stash in raw_video_url while a Seedance job is in flight. The
+// payload is JSON containing the requestId AND the canonical status/response
+// URLs that fal.ai itself returned at submit time. Lets the status endpoint
+// recover everything it needs without an extra Supabase column.
 const SEEDANCE_PENDING_PREFIX = "seedance:";
 
 export async function POST(req: NextRequest) {
@@ -79,9 +80,13 @@ export async function POST(req: NextRequest) {
         script: input.script,
         voice_style: input.voiceStyle,
         voice_url: voice.audioUrl,
-        // Stash the fal.ai request_id here so the polling endpoint can
-        // recover it without adding a new Supabase column.
-        raw_video_url: `${SEEDANCE_PENDING_PREFIX}${submit.requestId}`,
+        // Stash the fal.ai request_id AND the canonical URLs fal.ai returned,
+        // so the polling endpoint hits the exact URLs fal.ai expects.
+        raw_video_url: `${SEEDANCE_PENDING_PREFIX}${JSON.stringify({
+          requestId: submit.requestId,
+          statusUrl: submit.statusUrl,
+          responseUrl: submit.responseUrl,
+        })}`,
         final_video_url: "",
         captions: "",
         mode: input.mode,

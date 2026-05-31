@@ -71,7 +71,7 @@ export async function listVideoGenerations(): Promise<VideoGeneration[]> {
 
   try {
     const res = await fetch(
-      `${config.url}/rest/v1/${TABLE}?status=in.(completed,failed)&order=created_at.desc&limit=200`,
+      `${config.url}/rest/v1/${TABLE}?status=eq.completed&order=created_at.desc&limit=200`,
       { headers: headers(config.key) },
     );
     if (!res.ok) {

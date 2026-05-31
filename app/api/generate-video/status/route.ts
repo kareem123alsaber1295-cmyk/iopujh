@@ -41,15 +41,29 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(record);
   }
 
-  // Recover the fal.ai request_id we stashed in raw_video_url during submit.
+  // Recover the JSON payload (requestId + canonical URLs) we stashed in
+  // raw_video_url during submit.
   if (!record.raw_video_url?.startsWith(SEEDANCE_PENDING_PREFIX)) {
-    console.error(`[status] record ${id} has no seedance request_id in raw_video_url`);
+    console.error(`[status] record ${id} has no seedance payload in raw_video_url`);
     await updateVideoGeneration(id, { status: "failed" });
     return NextResponse.json({ ...record, status: "failed" });
   }
-  const requestId = record.raw_video_url.slice(SEEDANCE_PENDING_PREFIX.length);
+  let requestId: string;
+  let statusUrl: string;
+  let responseUrl: string;
+  try {
+    const payload = JSON.parse(record.raw_video_url.slice(SEEDANCE_PENDING_PREFIX.length));
+    requestId = payload.requestId;
+    statusUrl = payload.statusUrl;
+    responseUrl = payload.responseUrl;
+    if (!requestId || !statusUrl || !responseUrl) throw new Error("missing fields");
+  } catch (err) {
+    console.error(`[status] record ${id} has malformed seedance payload:`, err);
+    await updateVideoGeneration(id, { status: "failed" });
+    return NextResponse.json({ ...record, status: "failed" });
+  }
 
-  const job = await checkSeedance(requestId);
+  const job = await checkSeedance(requestId, statusUrl, responseUrl);
 
   if (job.status === "pending") {
     // Still rendering — tell the client to keep polling.
